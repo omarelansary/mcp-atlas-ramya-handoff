@@ -6,6 +6,16 @@ MCP-Atlas is a comprehensive benchmark for evaluating AI models' tool-use capabi
 - Leaderboard: [https://scale.com/leaderboard/mcp_atlas](https://scale.com/leaderboard/mcp_atlas)
 - Dataset: [https://huggingface.co/datasets/ScaleAI/MCP-Atlas](https://huggingface.co/datasets/ScaleAI/MCP-Atlas)
 
+## Ramya/Team HPC Handoff
+
+For the SCADS/HPC team-support smoke, start here:
+
+```text
+team_support/mcp_atlas_handoff/README.md
+```
+
+That packet contains the verified host `c2` result, the team runbook, and a Slurm-ready rerun script for the baseline `1.0` versus no-code-executor `0.0` smoke.
+
 ## What is MCP-Atlas?
 MCP-Atlas evaluates how well AI agents can use tools to complete real-world tasks. The benchmark includes:
 
