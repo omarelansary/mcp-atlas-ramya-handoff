@@ -4,6 +4,12 @@ Status: HPC-verified team-support runbook based on the 2026-07-02 smoke on host 
 
 This is a team-support infrastructure for producing MCP-Atlas capability-gap examples with the official completion and evaluator pipeline.
 
+Read first:
+
+```text
+ramya_start_here_20260707.md
+```
+
 ## Verified Smoke Result
 
 Reference task:
@@ -24,7 +30,15 @@ Scores on host `c2`:
 | baseline | none | `1.0` |
 | no-code-executor perturbation | `mcp-code-executor_execute_code` | `0.0` |
 
-This is the concise one-task capability-gap smoke result to use for handoff. Other filesystem-reader perturbations were also tested, but they still scored `1.0` because substitute filesystem tools remained available.
+This is the concise one-task candidate score-drop smoke result to use for handoff. Other filesystem-reader perturbations were also tested, but they still scored `1.0` because substitute filesystem tools remained available.
+
+Interpretation boundary:
+
+```text
+This smoke demonstrates a candidate score-drop pattern, not a final capability-gap label.
+The ablation input was generated outside native MCP-Atlas labels and then executed through the official MCP-Atlas harness.
+For dataset creation, distinguish tool removal, stable ablation failure, and validated capability gap.
+```
 
 This supports Omar's later thesis runs by verifying the official MCP-Atlas execution path, but it is not Omar's thesis method. See `boundary_and_support_note.md`.
 

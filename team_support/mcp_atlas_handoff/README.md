@@ -6,20 +6,28 @@ Purpose: make the MCP-Atlas setup usable for Ramya/team capability-gap data gene
 
 Read these first:
 
-1. `ramya_delivery_note.md`
+1. `ramya_start_here_20260707.md`
+   - First-read handoff note explaining what is set up, what the smoke test proves, and how to interpret tool-removal cases.
+
+2. `ramya_delivery_note.md`
    - What to send, what not to send, and how Ramya should use the packet.
 
-2. `ramya_mcp_atlas_runbook.md`
+3. `ramya_mcp_atlas_runbook.md`
    - The practical team-facing runbook.
    - Uses the verified baseline `1.0` versus no-code-executor `0.0` smoke.
 
-3. `hpc_phase_closeout_20260702.md`
+4. `ramya_capability_gap_dataset_support_20260707.md`
+   - Explains why MCP-Atlas can generate candidate gaps but does not provide final capability-gap labels by itself.
+
+5. `hpc_phase_closeout_20260702.md`
    - Short proof that the original prompt goals and extended phases are closed.
 
 ## Files
 
 - `ramya_delivery_note.md`: plain-language delivery note.
+- `ramya_start_here_20260707.md`: first-read handoff note.
 - `ramya_mcp_atlas_runbook.md`: HPC-verified team runbook.
+- `ramya_capability_gap_dataset_support_20260707.md`: capability-gap dataset interpretation note.
 - `hpc_phase_closeout_20260702.md`: closure checklist.
 - `hpc_mcp_atlas_smoke_status_20260702.md`: detailed evidence, command pattern, output filenames, blockers, and fixes.
 - `hpc_optional_expansion_notes_20260702.md`: notes for future multi-task expansion and approval boundaries.
@@ -44,7 +52,7 @@ Use `mcp_eval.env.example` as the template. Do not commit the real `.env`; it is
 | baseline | none | `1.0` |
 | no-code-executor perturbation | `mcp-code-executor_execute_code` | `0.0` |
 
-This is a team-support infrastructure smoke, not a thesis claim.
+This is a team-support infrastructure smoke and candidate score-drop example, not a final capability-gap label and not a thesis claim.
 
 ## Rerun
 

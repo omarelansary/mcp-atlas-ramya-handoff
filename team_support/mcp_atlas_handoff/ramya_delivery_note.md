@@ -18,19 +18,25 @@ Point her first to:
 
 The main files in that packet are:
 
-1. `ramya_mcp_atlas_runbook.md`
+1. `ramya_start_here_20260707.md`
+   - First-read note explaining what the setup proves and how to interpret candidate gaps.
+
+2. `ramya_mcp_atlas_runbook.md`
    - Main user-facing instructions.
    - Shows the verified baseline `1.0` versus no-code-executor `0.0` smoke.
 
-2. `hpc_phase_closeout_20260702.md`
+3. `ramya_capability_gap_dataset_support_20260707.md`
+   - Explains why MCP-Atlas can generate candidate gaps but does not already provide final capability-gap labels.
+
+4. `hpc_phase_closeout_20260702.md`
    - Short checklist proving the original prompt goals are done.
    - Good for a quick status update.
 
-3. `run_hpc_score_drop_smoke.slurm`
+5. `run_hpc_score_drop_smoke.slurm`
    - Batch script to rerun the same one-task smoke on the HPC/server.
    - It reruns baseline and no-code-executor perturbation.
 
-4. `boundary_and_support_note.md`
+6. `boundary_and_support_note.md`
    - Explains that this is team-support infrastructure that also de-risks Omar's later thesis runs.
 
 ## What Not To Deliver Publicly
@@ -56,7 +62,7 @@ The verified 2026-07-02 raw outputs are not included in the shared handoff packe
 Short version:
 
 ```text
-MCP-Atlas was verified on host c2 using the official pipeline. The baseline task scored 1.0. Removing mcp-code-executor_execute_code made the same task score 0.0. The runbook and Slurm rerun script are in team_support/mcp_atlas_handoff/.
+MCP-Atlas was verified on host c2 using the official pipeline. The baseline task scored 1.0. Removing mcp-code-executor_execute_code made the same task score 0.0. Treat this as a candidate score-drop example, not a final capability-gap label. The runbook and Slurm rerun script are in team_support/mcp_atlas_handoff/.
 ```
 
 Use this result as a team-support smoke, not as a thesis claim.
@@ -67,6 +73,7 @@ If she only needs the result, read:
 
 ```text
 ramya_mcp_atlas_runbook.md
+ramya_capability_gap_dataset_support_20260707.md
 hpc_phase_closeout_20260702.md
 ```
 

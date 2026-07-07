@@ -15,7 +15,7 @@ What this packet is:
 
 - a reproducible MCP-Atlas team smoke;
 - a runbook and Slurm rerun script;
-- a capability-gap example for team data generation;
+- a candidate score-drop example for team data generation;
 - infrastructure readiness evidence.
 
 What this packet is not:
@@ -23,6 +23,7 @@ What this packet is not:
 - a thesis method;
 - a final active-registry selector;
 - a multi-task benchmark result;
+- a finished capability-gap dataset;
 - a claim of scientific validity or superiority.
 
 For thesis work, this should be treated as the verified official MCP-Atlas execution path that future selector experiments can use after the selector itself is defined and diagnosed separately.

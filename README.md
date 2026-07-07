@@ -11,10 +11,10 @@ MCP-Atlas is a comprehensive benchmark for evaluating AI models' tool-use capabi
 For the SCADS/HPC team-support smoke, start here:
 
 ```text
-team_support/mcp_atlas_handoff/README.md
+team_support/mcp_atlas_handoff/ramya_start_here_20260707.md
 ```
 
-That packet contains the verified host `c2` result, the team runbook, and a Slurm-ready rerun script for the baseline `1.0` versus no-code-executor `0.0` smoke.
+That packet contains the verified host `c2` result, the team runbook, a capability-gap labeling note, and a Slurm-ready rerun script for the baseline `1.0` versus no-code-executor `0.0` smoke. Treat the score drop as a candidate example, not a final capability-gap label.
 
 ## What is MCP-Atlas?
 MCP-Atlas evaluates how well AI agents can use tools to complete real-world tasks. The benchmark includes:
