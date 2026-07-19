@@ -9,8 +9,12 @@ from typing import Any, Dict, List, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException, Header, Request, Response
 
-from .agent_eval import handle_run_mcp_eval
-from .schema import RunAgentAPIRequestBody
+from .agent_eval import (
+    dynamic_safe_trace,
+    handle_run_mcp_eval,
+    run_dynamic_mcp_eval_request,
+)
+from .schema import RunAgentAPIRequestBody, RunDynamicAgentAPIRequestBody
 from .errors import MCPClientToolExecutionError
 from .config import config
 
@@ -88,6 +92,31 @@ async def run_agent(
             detail={
                 "error": f"Unknown error during mcp_eval: {str(error)}",
             },
+        )
+
+
+@app.post("/v2/mcp_eval/run_agent_dynamic")
+async def run_agent_dynamic(
+    body: RunDynamicAgentAPIRequestBody,
+    authorization: Optional[str] = Header(None),
+):
+    """P1-016 dynamic-loop endpoint; the fixed-list route remains unchanged."""
+    logger.info(f"v2 API /run_agent_dynamic called with model: {body.model}")
+
+    try:
+        dynamic_result = await run_dynamic_mcp_eval_request(body)
+        return {
+            "outputs": list(dynamic_result.outputs),
+            "dynamic_trace": dynamic_safe_trace(dynamic_result),
+        }
+    except MCPClientToolExecutionError as error:
+        logger.error(f"Dynamic MCP client tool execution error: {error}")
+        raise HTTPException(status_code=500, detail={"error": str(error)})
+    except Exception as error:
+        logger.error(f"Error during dynamic MCP eval execution: {error}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={"error": f"Unknown error during dynamic mcp_eval: {str(error)}"},
         )
 
 

@@ -2,12 +2,14 @@
 
 import json
 import logging
-from typing import AsyncGenerator, Dict, List, Union, Any, Optional
+from dataclasses import asdict
+from typing import AsyncGenerator, Dict, List, Union, Any, Optional, Sequence
 
 from .mcp_client import MCPClient, SandboxMCPClient
 from .llm import create_completion, _transform_tool_calls
 from .schema import (
     RunAgentAPIRequestBody,
+    RunDynamicAgentAPIRequestBody,
     Message,
     AssistantMessage,
     ToolCallOutputMessage,
@@ -21,6 +23,7 @@ from .schema import (
 )
 from .errors import MCPClientToolExecutionError
 from .config import config
+from .dynamic_eval import run_dynamic_mcp_eval
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,20 @@ class AgentOutput:
     def __init__(self, output_type: str, data: Any):
         self.type = output_type
         self.data = data
+
+
+class _ConfiguredDynamicSelector:
+    """Explicit full/selected active-set source for the first endpoint smoke."""
+
+    def __init__(self, active_tool_names: Optional[Sequence[str]]):
+        self._active_tool_names = (
+            None if active_tool_names is None else tuple(active_tool_names)
+        )
+
+    def select(self, *, raw_tools, visible_messages, cycle_index):
+        if self._active_tool_names is None:
+            return [tool["name"] for tool in raw_tools]
+        return list(self._active_tool_names)
 
 
 async def run_mcp_eval(
@@ -137,3 +154,40 @@ async def handle_run_mcp_eval(
         extra_body=body.extra_body,
     ):
         yield output
+
+
+async def run_dynamic_mcp_eval_request(
+    body: RunDynamicAgentAPIRequestBody,
+) -> Any:
+    """Execute the separate P1-016 loop and retain only structural provenance."""
+
+    mcp_client = SandboxMCPClient(
+        sandbox_url=config.MCP_SERVER_URL,
+        enabled_tools=None,
+    )
+    return await run_dynamic_mcp_eval(
+        mcp_client=mcp_client,
+        selector=_ConfiguredDynamicSelector(body.active_tool_names),
+        completion=create_completion,
+        model=body.model,
+        messages=body.messages,
+        max_turns=body.max_turns,
+        extra_body=body.extra_body,
+    )
+
+
+async def handle_run_dynamic_mcp_eval(
+    body: RunDynamicAgentAPIRequestBody,
+) -> AsyncGenerator[AgentOutput, None]:
+    """Yield dynamic outputs in the same internal form as the fixed-list path."""
+    result = await run_dynamic_mcp_eval_request(body)
+    for output in result.outputs:
+        yield AgentOutput(output["type"], output["data"])
+
+
+def dynamic_safe_trace(result: Any) -> dict[str, Any]:
+    """Return route-safe provenance without prompts, schemas, calls, or results."""
+    return {
+        "cycles": [asdict(cycle) for cycle in result.cycles],
+        "model_final_text_present": result.final_text is not None,
+    }

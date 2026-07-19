@@ -122,6 +122,26 @@ class RunAgentAPIRequestBody(BaseModel):
         populate_by_name = True
 
 
+class RunDynamicAgentAPIRequestBody(BaseModel):
+    """Request body for the separate P1-016 dynamic completion endpoint.
+
+    ``activeToolNames`` is optional. When omitted, the host exposes every raw
+    source tool in the discovery order for each completion cycle. When supplied,
+    it is an explicit development active set; it is not a learned selector.
+    """
+
+    model: str
+    messages: List[Message]
+    active_tool_names: Optional[List[str]] = Field(
+        None, alias="activeToolNames"
+    )
+    max_turns: int = Field(20, alias="maxTurns")
+    extra_body: Optional[Dict[str, Any]] = Field(None, alias="extraBody")
+
+    class Config:
+        populate_by_name = True
+
+
 class CallToolResponse(BaseModel):
     """Response from calling a tool."""
 

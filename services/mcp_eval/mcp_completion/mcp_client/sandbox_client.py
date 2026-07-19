@@ -31,25 +31,33 @@ class SandboxMCPClient(MCPClient):
     async def list_tools(self) -> List[ToolDefinition]:
         """List available tools from the sandbox."""
         try:
-            async with httpx.AsyncClient(timeout=self.list_tools_timeout) as client:
-                response = await client.post(
-                    f"{self.sandbox_url}/list-tools",
-                    headers={"Content-Type": "application/json"},
-                )
-                response.raise_for_status()
+            tools_data = await self.list_raw_tools()
+            tools = [ToolDefinition(**tool) for tool in tools_data]
 
-                tools_data = response.json()
-                tools = [ToolDefinition(**tool) for tool in tools_data]
+            # Filter by enabled tools if specified.
+            if self.enabled_tools:
+                tools = [tool for tool in tools if tool.name in self.enabled_tools]
 
-                # Filter by enabled tools if specified
-                if self.enabled_tools:
-                    tools = [tool for tool in tools if tool.name in self.enabled_tools]
-
-                return tools
+            return tools
 
         except Exception as error:
             logger.error(f"Failed to list tools from sandbox: {error}")
             raise
+
+    async def list_raw_tools(self) -> List[Dict[str, Any]]:
+        """Return the unprojected `/list-tools` response for dynamic adapters."""
+        async with httpx.AsyncClient(timeout=self.list_tools_timeout) as client:
+            response = await client.post(
+                f"{self.sandbox_url}/list-tools",
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            tools_data = response.json()
+        if not isinstance(tools_data, list) or not all(
+            isinstance(tool, dict) for tool in tools_data
+        ):
+            raise ValueError("sandbox /list-tools response must be a list of objects")
+        return tools_data
 
     async def call_tool(self, tool_name: str, args: Any) -> CallToolResponse:
         """Call a tool in the sandbox."""
