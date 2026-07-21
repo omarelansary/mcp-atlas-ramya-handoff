@@ -2,7 +2,7 @@
 
 from litellm.types.utils import Message as MessageType
 from typing import Dict, List, Literal, Optional, Union, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ToolCallSchema(BaseModel):
@@ -123,11 +123,12 @@ class RunAgentAPIRequestBody(BaseModel):
 
 
 class RunDynamicAgentAPIRequestBody(BaseModel):
-    """Request body for the separate P1-016 dynamic completion endpoint.
+    """Request body for the separate P1-016/P1-017 dynamic completion endpoint.
 
     ``activeToolNames`` is optional. When omitted, the host exposes every raw
     source tool in the discovery order for each completion cycle. When supplied,
-    it is an explicit development active set; it is not a learned selector.
+    it is retained only for the P1-016 explicit-set smoke interface. P1-017
+    conditions must instead use ``selectorId`` and ``toolBudget``.
     """
 
     model: str
@@ -135,11 +136,33 @@ class RunDynamicAgentAPIRequestBody(BaseModel):
     active_tool_names: Optional[List[str]] = Field(
         None, alias="activeToolNames"
     )
+    selector_id: Optional[
+        Literal[
+            "dynamic_full",
+            "dynamic_stateless_semantic",
+            "dynamic_called_tool_retention",
+        ]
+    ] = Field(None, alias="selectorId")
+    tool_budget: Optional[int] = Field(None, alias="toolBudget", ge=1)
     max_turns: int = Field(20, alias="maxTurns")
     extra_body: Optional[Dict[str, Any]] = Field(None, alias="extraBody")
 
+    @model_validator(mode="after")
+    def validate_dynamic_selection_mode(self):
+        if self.selector_id is not None:
+            if self.active_tool_names is not None:
+                raise ValueError(
+                    "selectorId conditions must not include activeToolNames"
+                )
+            if self.tool_budget is None:
+                raise ValueError("selectorId conditions require toolBudget")
+        elif self.tool_budget is not None:
+            raise ValueError("toolBudget requires selectorId")
+        return self
+
     class Config:
         populate_by_name = True
+        extra = "forbid"
 
 
 class CallToolResponse(BaseModel):

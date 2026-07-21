@@ -24,6 +24,14 @@ class HiddenToolRequestError(DynamicMcpEvalError):
     """Raised when a completion requests a tool outside the active set."""
 
 
+@dataclass(frozen=True)
+class DynamicSelection:
+    """Selector output plus evaluator-safe retention provenance."""
+
+    active_tool_names: tuple[str, ...]
+    retained_tool_names: tuple[str, ...] = ()
+
+
 class RawMcpClient(Protocol):
     """The raw source-object discovery and invocation boundary."""
 
@@ -43,8 +51,8 @@ class DynamicToolSelector(Protocol):
         raw_tools: Sequence[dict[str, Any]],
         visible_messages: Sequence[Message],
         cycle_index: int,
-    ) -> Sequence[str]:
-        """Return the ordered active names for this completion cycle."""
+    ) -> Sequence[str] | DynamicSelection:
+        """Return ordered active names and optional retention provenance."""
 
 
 CompletionFn = Callable[..., Awaitable[Any]]
@@ -52,6 +60,7 @@ CompletionFn = Callable[..., Awaitable[Any]]
 
 _FORBIDDEN_SOURCE_TOOL_FIELDS = frozenset(
     {
+        "enabled_tools",
         "evaluator",
         "evaluator_labels",
         "gold",
@@ -74,8 +83,13 @@ class DynamicCycleTrace:
     cycle_index: int
     raw_tool_names: tuple[str, ...]
     raw_tool_hash: str
+    raw_tool_count: int
     active_tool_names: tuple[str, ...]
+    retained_tool_names: tuple[str, ...]
+    selector_id: str | None
+    provider_tool_count: int
     provider_tools_hash: str
+    provider_schema_utf8_bytes: int
 
 
 @dataclass(frozen=True)
@@ -115,26 +129,32 @@ async def run_dynamic_mcp_eval(
     for cycle_index in range(max_turns):
         raw_tools = await mcp_client.list_raw_tools()
         _validate_raw_tools(raw_tools)
-        active_names = _validate_active_names(
+        selection = _normalize_selection(
             selector.select(
                 raw_tools=copy.deepcopy(raw_tools),
                 visible_messages=tuple(copy.deepcopy(visible_messages)),
                 cycle_index=cycle_index,
             ),
-            raw_tools,
+            raw_tools=raw_tools,
+            visible_messages=visible_messages,
         )
+        active_names = selection.active_tool_names
         active_name_set = set(active_names)
         active_tools = [tool for tool in raw_tools if tool["name"] in active_name_set]
         provider_tools = raw_tools_to_provider_tools(active_tools)
+        provider_tool_payload = [tool.model_dump() for tool in provider_tools]
         cycles.append(
             DynamicCycleTrace(
                 cycle_index=cycle_index,
                 raw_tool_names=tuple(tool["name"] for tool in raw_tools),
                 raw_tool_hash=_canonical_hash(raw_tools),
+                raw_tool_count=len(raw_tools),
                 active_tool_names=active_names,
-                provider_tools_hash=_canonical_hash(
-                    [tool.model_dump() for tool in provider_tools]
-                ),
+                retained_tool_names=selection.retained_tool_names,
+                selector_id=_selector_id(selector),
+                provider_tool_count=len(provider_tools),
+                provider_tools_hash=_canonical_hash(provider_tool_payload),
+                provider_schema_utf8_bytes=_canonical_utf8_bytes(provider_tool_payload),
             )
         )
 
@@ -215,7 +235,12 @@ def _validate_raw_tools(raw_tools: Any) -> None:
 def _validate_raw_tool(tool: Any) -> None:
     if not isinstance(tool, dict):
         raise DynamicMcpEvalError("raw tool discovery entries must be objects")
-    forbidden = _FORBIDDEN_SOURCE_TOOL_FIELDS.intersection(tool)
+    forbidden = {
+        field_name
+        for field_name in tool
+        if isinstance(field_name, str)
+        and field_name.lower() in _FORBIDDEN_SOURCE_TOOL_FIELDS
+    }
     if forbidden:
         raise DynamicMcpEvalError(
             f"evaluator-only fields reached raw discovery: {sorted(forbidden)!r}"
@@ -248,6 +273,43 @@ def _validate_active_names(
     return tuple(ordered)
 
 
+def _normalize_selection(
+    selection: Sequence[str] | DynamicSelection,
+    *,
+    raw_tools: Sequence[dict[str, Any]],
+    visible_messages: Sequence[Message],
+) -> DynamicSelection:
+    if isinstance(selection, DynamicSelection):
+        active_names = _validate_active_names(selection.active_tool_names, raw_tools)
+        retained_names = _validate_active_names(selection.retained_tool_names, raw_tools)
+    else:
+        active_names = _validate_active_names(selection, raw_tools)
+        retained_names = ()
+
+    if not set(retained_names).issubset(active_names):
+        raise DynamicMcpEvalError("retained tools must be present in the active set")
+    called_names = _visible_called_tool_names(visible_messages)
+    if any(name not in called_names for name in retained_names):
+        raise DynamicMcpEvalError("selector retained a tool that was not previously called")
+    return DynamicSelection(
+        active_tool_names=active_names,
+        retained_tool_names=retained_names,
+    )
+
+
+def _visible_called_tool_names(visible_messages: Sequence[Message]) -> set[str]:
+    names: set[str] = set()
+    for message in visible_messages:
+        if getattr(message, "role", None) != "assistant":
+            continue
+        for tool_call in getattr(message, "tool_calls", None) or []:
+            function = getattr(tool_call, "function", None)
+            name = function.get("name") if isinstance(function, dict) else getattr(function, "name", None)
+            if isinstance(name, str) and name:
+                names.add(name)
+    return names
+
+
 def _parse_arguments(raw_arguments: Any, tool_name: str) -> dict[str, Any]:
     if not isinstance(raw_arguments, str):
         raise DynamicMcpEvalError(f"tool {tool_name!r} arguments must be a JSON string")
@@ -263,5 +325,18 @@ def _parse_arguments(raw_arguments: Any, tool_name: str) -> dict[str, Any]:
 
 
 def _canonical_hash(value: Any) -> str:
-    serialized = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    serialized = _canonical_json(value)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _canonical_utf8_bytes(value: Any) -> int:
+    return len(_canonical_json(value).encode("utf-8"))
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+
+
+def _selector_id(selector: DynamicToolSelector) -> str | None:
+    selector_id = getattr(selector, "selector_id", None)
+    return selector_id if isinstance(selector_id, str) and selector_id else None

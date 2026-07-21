@@ -75,6 +75,35 @@ class DynamicResultsTests(unittest.TestCase):
         self.assertNotIn("TRAJECTORY_MARKER", serialized)
         self.assertNotIn("CLAIMS_MARKER", serialized)
 
+    def test_registered_payload_uses_selector_id_and_budget_not_active_names(self):
+        condition = DynamicCondition(
+            "semantic",
+            None,
+            selector_id="dynamic_stateless_semantic",
+            tool_budget=10,
+        )
+        payload = build_dynamic_payload(
+            _source_row(),
+            model="fake/model",
+            condition=condition,
+            max_turns=2,
+        )
+
+        self.assertEqual(payload["selectorId"], "dynamic_stateless_semantic")
+        self.assertEqual(payload["toolBudget"], 10)
+        self.assertNotIn("activeToolNames", payload)
+        self.assertNotIn("TRAJECTORY", payload)
+        self.assertNotIn("GTFA_CLAIMS", payload)
+
+    def test_registered_condition_rejects_client_supplied_active_names(self):
+        with self.assertRaises(ValueError):
+            DynamicCondition(
+                "invalid",
+                ("files_read",),
+                selector_id="dynamic_stateless_semantic",
+                tool_budget=10,
+            )
+
     def test_result_row_is_evaluator_compatible(self):
         row = build_evaluator_result_row(
             _source_row(),

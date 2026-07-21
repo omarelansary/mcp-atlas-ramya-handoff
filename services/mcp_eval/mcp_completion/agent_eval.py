@@ -24,6 +24,7 @@ from .schema import (
 from .errors import MCPClientToolExecutionError
 from .config import config
 from .dynamic_eval import run_dynamic_mcp_eval
+from .dynamic_selectors import build_registered_dynamic_selector
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,11 @@ class _ConfiguredDynamicSelector:
     def __init__(self, active_tool_names: Optional[Sequence[str]]):
         self._active_tool_names = (
             None if active_tool_names is None else tuple(active_tool_names)
+        )
+        self.selector_id = (
+            "p1_016_dynamic_full"
+            if self._active_tool_names is None
+            else "p1_016_explicit_active_set"
         )
 
     def select(self, *, raw_tools, visible_messages, cycle_index):
@@ -165,9 +171,17 @@ async def run_dynamic_mcp_eval_request(
         sandbox_url=config.MCP_SERVER_URL,
         enabled_tools=None,
     )
+    selector = (
+        build_registered_dynamic_selector(
+            selector_id=body.selector_id,
+            tool_budget=body.tool_budget,
+        )
+        if body.selector_id is not None and body.tool_budget is not None
+        else _ConfiguredDynamicSelector(body.active_tool_names)
+    )
     return await run_dynamic_mcp_eval(
         mcp_client=mcp_client,
-        selector=_ConfiguredDynamicSelector(body.active_tool_names),
+        selector=selector,
         completion=create_completion,
         model=body.model,
         messages=body.messages,

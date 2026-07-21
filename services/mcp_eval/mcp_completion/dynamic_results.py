@@ -19,10 +19,12 @@ EVALUATOR_REQUIRED_SOURCE_COLUMNS = (
 
 @dataclass(frozen=True)
 class DynamicCondition:
-    """Predeclared dynamic full/selected condition for one task execution."""
+    """Predeclared P1-016 explicit-set or P1-017 registered condition."""
 
     condition_id: str
     active_tool_names: tuple[str, ...] | None
+    selector_id: str | None = None
+    tool_budget: int | None = None
 
     def __post_init__(self) -> None:
         if not self.condition_id:
@@ -32,6 +34,15 @@ class DynamicCondition:
                 raise ValueError("active_tool_names must not contain duplicates")
             if any(not name for name in self.active_tool_names):
                 raise ValueError("active_tool_names must not contain empty names")
+        if self.selector_id is not None:
+            if self.active_tool_names is not None:
+                raise ValueError("registered conditions must not set active_tool_names")
+            if not self.selector_id:
+                raise ValueError("selector_id must be nonempty when provided")
+            if not isinstance(self.tool_budget, int) or self.tool_budget < 1:
+                raise ValueError("registered conditions require a positive tool_budget")
+        elif self.tool_budget is not None:
+            raise ValueError("tool_budget requires selector_id")
 
 
 def build_dynamic_payload(
@@ -55,7 +66,10 @@ def build_dynamic_payload(
         "messages": [{"role": "user", "content": source_row["PROMPT"]}],
         "maxTurns": max_turns,
     }
-    if condition.active_tool_names is not None:
+    if condition.selector_id is not None:
+        payload["selectorId"] = condition.selector_id
+        payload["toolBudget"] = condition.tool_budget
+    elif condition.active_tool_names is not None:
         payload["activeToolNames"] = list(condition.active_tool_names)
     if extra_body:
         payload["extraBody"] = copy.deepcopy(dict(extra_body))
@@ -91,14 +105,12 @@ def build_evaluator_result_row(
         "errors": "[]",
         "trajectory_time": elapsed_seconds,
         "num_retry": attempts,
-        "exposure_mode": (
-            "dynamic-full"
-            if condition.active_tool_names is None
-            else "dynamic-selected"
-        ),
+        "exposure_mode": _exposure_mode(condition),
         "configured_active_tool_names": json.dumps(
             list(condition.active_tool_names or ()), ensure_ascii=True
         ),
+        "selector_id": condition.selector_id or "",
+        "tool_budget": condition.tool_budget if condition.tool_budget is not None else "",
         "dynamic_trace": json.dumps(trace, ensure_ascii=True, sort_keys=True),
         "model_id": model,
     }
@@ -126,12 +138,10 @@ def build_safe_manifest(
         "source_pin": source_pin,
         "condition_id": condition.condition_id,
         "model": model,
-        "exposure_mode": (
-            "dynamic-full"
-            if condition.active_tool_names is None
-            else "dynamic-selected"
-        ),
+        "exposure_mode": _exposure_mode(condition),
         "configured_active_tool_names": list(condition.active_tool_names or ()),
+        "selector_id": condition.selector_id,
+        "tool_budget": condition.tool_budget,
         "dynamic_cycle_count": len(cycles),
         "dynamic_cycles": copy.deepcopy(cycles),
         "raw_result_sha256": hashlib.sha256(raw_result_bytes).hexdigest(),
@@ -189,3 +199,11 @@ def _require_source_columns(source_row: Mapping[str, Any]) -> None:
     ]
     if missing:
         raise ValueError(f"source row is missing string columns: {missing!r}")
+
+
+def _exposure_mode(condition: DynamicCondition) -> str:
+    if condition.selector_id == "dynamic_full" or (
+        condition.selector_id is None and condition.active_tool_names is None
+    ):
+        return "dynamic-full"
+    return "dynamic-selected"

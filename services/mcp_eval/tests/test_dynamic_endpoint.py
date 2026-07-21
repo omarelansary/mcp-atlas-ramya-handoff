@@ -143,6 +143,107 @@ class DynamicEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(completion.request_tool_names, [["files_read", "code_execute"]])
 
+    def test_registered_semantic_endpoint_uses_safe_selector_trace(self):
+        completion = _SequenceCompletion([_CompletionResult(_AssistantMessage(content="done"))])
+
+        with patch(
+            "mcp_completion.agent_eval.SandboxMCPClient", _FakeSandboxMcpClient
+        ), patch("mcp_completion.agent_eval.create_completion", completion):
+            response = TestClient(app).post(
+                "/v2/mcp_eval/run_agent_dynamic",
+                json={
+                    "model": "fake/model",
+                    "messages": [{"role": "user", "content": "Read a file."}],
+                    "selectorId": "dynamic_stateless_semantic",
+                    "toolBudget": 1,
+                    "maxTurns": 1,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(completion.request_tool_names, [["files_read"]])
+        trace = response.json()["dynamic_trace"]["cycles"][0]
+        self.assertEqual(trace["selector_id"], "dynamic_stateless_semantic")
+        self.assertEqual(trace["raw_tool_count"], 2)
+        self.assertEqual(trace["provider_tool_count"], 1)
+        self.assertGreater(trace["provider_schema_utf8_bytes"], 0)
+        serialized_trace = str(trace)
+        for forbidden in ("inputSchema", "description", "arguments", "content"):
+            self.assertNotIn(forbidden, serialized_trace)
+
+    def test_registered_full_endpoint_preserves_raw_source_order(self):
+        completion = _SequenceCompletion([_CompletionResult(_AssistantMessage(content="done"))])
+
+        with patch(
+            "mcp_completion.agent_eval.SandboxMCPClient", _FakeSandboxMcpClient
+        ), patch("mcp_completion.agent_eval.create_completion", completion):
+            response = TestClient(app).post(
+                "/v2/mcp_eval/run_agent_dynamic",
+                json={
+                    "model": "fake/model",
+                    "messages": [{"role": "user", "content": "Use a tool."}],
+                    "selectorId": "dynamic_full",
+                    "toolBudget": 1,
+                    "maxTurns": 1,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(completion.request_tool_names, [["files_read", "code_execute"]])
+        self.assertEqual(
+            response.json()["dynamic_trace"]["cycles"][0]["selector_id"],
+            "dynamic_full",
+        )
+
+    def test_registered_selector_rejects_explicit_active_set_and_evaluator_field(self):
+        mixed_mode = TestClient(app).post(
+            "/v2/mcp_eval/run_agent_dynamic",
+            json={
+                "model": "fake/model",
+                "messages": [{"role": "user", "content": "Read a file."}],
+                "selectorId": "dynamic_stateless_semantic",
+                "toolBudget": 1,
+                "activeToolNames": ["files_read"],
+                "maxTurns": 1,
+            },
+        )
+        evaluator_field = TestClient(app).post(
+            "/v2/mcp_eval/run_agent_dynamic",
+            json={
+                "model": "fake/model",
+                "messages": [{"role": "user", "content": "Read a file."}],
+                "selectorId": "dynamic_stateless_semantic",
+                "toolBudget": 1,
+                "GTFA_CLAIMS": "forbidden",
+                "maxTurns": 1,
+            },
+        )
+        missing_budget = TestClient(app).post(
+            "/v2/mcp_eval/run_agent_dynamic",
+            json={
+                "model": "fake/model",
+                "messages": [{"role": "user", "content": "Read a file."}],
+                "selectorId": "dynamic_stateless_semantic",
+                "maxTurns": 1,
+            },
+        )
+        unknown_selector = TestClient(app).post(
+            "/v2/mcp_eval/run_agent_dynamic",
+            json={
+                "model": "fake/model",
+                "messages": [{"role": "user", "content": "Read a file."}],
+                "selectorId": "unregistered",
+                "toolBudget": 1,
+                "maxTurns": 1,
+            },
+        )
+
+        self.assertEqual(mixed_mode.status_code, 422)
+        self.assertEqual(evaluator_field.status_code, 422)
+        self.assertEqual(missing_budget.status_code, 422)
+        self.assertEqual(unknown_selector.status_code, 422)
+        self.assertEqual(_FakeSandboxMcpClient.instances, [])
+
     def test_dynamic_endpoint_blocks_hidden_call(self):
         completion = _SequenceCompletion(
             [

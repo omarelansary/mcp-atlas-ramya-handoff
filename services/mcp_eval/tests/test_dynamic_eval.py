@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from mcp_completion.dynamic_eval import (
     DynamicMcpEvalError,
+    DynamicSelection,
     HiddenToolRequestError,
     run_dynamic_mcp_eval,
 )
@@ -210,7 +211,7 @@ class DynamicMcpEvalTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejects_evaluator_fields_before_selector_or_model(self):
         contaminated_tools = _tools()
-        contaminated_tools[0]["gold_labels"] = ["files_read"]
+        contaminated_tools[0]["GTFA_CLAIMS"] = ["files_read"]
         selector = CycleSelector([["files_read"]])
         completion = SequenceCompletion([])
 
@@ -225,6 +226,29 @@ class DynamicMcpEvalTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(selector.calls, [])
+        self.assertEqual(completion.requests, [])
+
+    async def test_rejects_retention_of_an_uncalled_tool_before_completion(self):
+        class InvalidRetentionSelector:
+            selector_id = "dynamic_called_tool_retention"
+
+            def select(self, *, raw_tools, visible_messages, cycle_index):
+                return DynamicSelection(
+                    active_tool_names=("files_read",),
+                    retained_tool_names=("files_read",),
+                )
+
+        completion = SequenceCompletion([])
+        with self.assertRaises(DynamicMcpEvalError):
+            await run_dynamic_mcp_eval(
+                mcp_client=FakeRawMcpClient(_tools()),
+                selector=InvalidRetentionSelector(),
+                completion=completion,
+                model="fake/model",
+                messages=[UserMessage(role="user", content="Read a file.")],
+                max_turns=1,
+            )
+
         self.assertEqual(completion.requests, [])
 
 
