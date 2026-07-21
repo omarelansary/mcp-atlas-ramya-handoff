@@ -8,8 +8,9 @@ separate interfaces.
 
 1. Inspect `git status -sb`, the current branch, its merge base, and its diff
    from `origin/main`.
-2. Read the current P1 task/state in `thesis-main` and the private P1-017
-   registry before changing dynamic-selector behavior.
+2. Read `thesis-main/docs/traceability/thesis_program_ledger.md`, the current
+   P1 task/state, and the private P1-017 registry before changing the dynamic
+   adapter.
 3. Use one branch for one task. Start P1-017 work from current `origin/main`,
    not from an archival or handoff branch.
 
@@ -18,6 +19,10 @@ separate interfaces.
 - Keep the official fixed-list `/v2/mcp_eval/run_agent` path behavior intact.
 - Put thesis dynamic exposure only behind the separate dynamic route and
   request model. Do not silently change the official route to use a selector.
+- Keep this fork as a source adapter. Reusable selection contracts and policy
+  logic belong in the pinned `active-registry-core` thesis package; this fork
+  may only convert MCP-Atlas objects, execute the host loop, and invoke the
+  MCP-Atlas evaluator.
 - A selector may use only the frozen permitted inputs: raw MCP tool fields,
   model-visible messages, prior tool-call names, and state derived from them.
   It must not consume evaluator labels, trajectories, GTFA claims, tool
