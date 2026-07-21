@@ -15,7 +15,7 @@ dependencies = [
     "httpx>=0.28.0",
     "python-multipart>=0.0.26",
     "python-dotenv>=1.0.0",
-    "litellm>=1.75.0",
+    "litellm==1.76.3",
     "pandas>=2.0.3",
     "aiohttp>=3.10.11",
     "aiofiles>=24.1.0",
