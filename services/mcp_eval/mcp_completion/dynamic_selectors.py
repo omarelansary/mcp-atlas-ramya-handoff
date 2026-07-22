@@ -14,6 +14,7 @@ from active_registry_core import (
     DYNAMIC_CALLED_TOOL_RETENTION_SELECTOR_ID,
     DYNAMIC_FULL_SELECTOR_ID,
     DYNAMIC_STATELESS_SEMANTIC_SELECTOR_ID,
+    MCP_ATLAS_P1_017_RANKING_CONFIGURATION,
     REGISTERED_DYNAMIC_SELECTOR_IDS,
     P1017SelectorConfigurationError,
     RegisteredP1017Selector,
@@ -44,6 +45,7 @@ class RegisteredDynamicSelector:
                 selector_id=self.selector_id,
                 tool_budget=self.tool_budget,
                 retention_capacity=self.retention_capacity,
+                ranking_configuration=MCP_ATLAS_P1_017_RANKING_CONFIGURATION,
             )
         except P1017SelectorConfigurationError as error:
             raise DynamicSelectorConfigurationError(str(error)) from error
@@ -78,6 +80,7 @@ def build_registered_dynamic_selector(
         build_registered_p1_017_selector(
             selector_id=selector_id,
             tool_budget=tool_budget,
+            ranking_configuration=MCP_ATLAS_P1_017_RANKING_CONFIGURATION,
         )
     except P1017SelectorConfigurationError as error:
         raise DynamicSelectorConfigurationError(str(error)) from error

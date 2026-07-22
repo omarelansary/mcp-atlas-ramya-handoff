@@ -5,6 +5,8 @@ from __future__ import annotations
 import unittest
 from dataclasses import dataclass
 
+from active_registry_core import MCP_ATLAS_P1_017_RANKING_CONFIGURATION
+
 from mcp_completion.dynamic_selectors import (
     DYNAMIC_CALLED_TOOL_RETENTION_SELECTOR_ID,
     DYNAMIC_STATELESS_SEMANTIC_SELECTOR_ID,
@@ -46,6 +48,17 @@ def _tools() -> list[dict]:
 
 
 class RegisteredDynamicSelectorTests(unittest.TestCase):
+    def test_adapter_uses_the_explicit_mcp_atlas_profile(self):
+        selector = build_registered_dynamic_selector(
+            selector_id=DYNAMIC_STATELESS_SEMANTIC_SELECTOR_ID,
+            tool_budget=2,
+        )
+
+        self.assertEqual(
+            selector._core_selector.ranking_configuration,
+            MCP_ATLAS_P1_017_RANKING_CONFIGURATION,
+        )
+
     def test_stateless_semantic_selection_is_deterministic_from_visible_fields(self):
         selector = build_registered_dynamic_selector(
             selector_id=DYNAMIC_STATELESS_SEMANTIC_SELECTOR_ID,
