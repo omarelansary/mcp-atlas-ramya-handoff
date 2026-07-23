@@ -21,15 +21,20 @@ from mcp_completion.p1_017_development import (
     CORE_COMMIT,
     DEVELOPMENT_TASK_IDS,
     EVALUATOR_PASS_THRESHOLD,
+    FROZEN_HELDOUT_BUDGET,
+    HELDOUT_TASK_IDS,
     REPETITIONS,
     SELECTOR_IDS,
     SOURCE_TASK_FILE_SHA256,
     build_development_grid,
+    build_heldout_grid,
+    build_heldout_preflight_manifest,
     build_preflight_manifest,
     build_registered_condition,
     build_registered_request_payload,
     load_execution_manifest,
     load_frozen_development_rows,
+    load_frozen_heldout_rows,
 )
 from scripts.run_p1_017_dynamic_development_grid import _execute_run
 
@@ -57,6 +62,34 @@ class P1017DevelopmentGridTests(unittest.TestCase):
 
         self.assertEqual(tuple(rows), DEVELOPMENT_TASK_IDS)
         self.assertEqual(len(rows), len(DEVELOPMENT_TASK_IDS))
+
+    def test_frozen_source_file_returns_only_heldout_rows(self):
+        source_file = Path(__file__).resolve().parents[1] / "sample_tasks.csv"
+        rows = load_frozen_heldout_rows(source_file)
+
+        self.assertEqual(tuple(rows), HELDOUT_TASK_IDS)
+        self.assertEqual(len(rows), len(HELDOUT_TASK_IDS))
+        self.assertEqual(set(rows).intersection(DEVELOPMENT_TASK_IDS), set())
+
+    def test_heldout_grid_uses_only_the_selected_common_budget(self):
+        runs = build_heldout_grid()
+
+        self.assertEqual(
+            len(runs),
+            len(HELDOUT_TASK_IDS) * len(SELECTOR_IDS) * len(REPETITIONS),
+        )
+        self.assertEqual({run.task_id for run in runs}, set(HELDOUT_TASK_IDS))
+        self.assertEqual({run.tool_budget for run in runs}, {FROZEN_HELDOUT_BUDGET})
+        self.assertEqual(len({run.result_key for run in runs}), len(runs))
+
+        manifest = build_heldout_preflight_manifest(
+            model="fake/model",
+            max_turns=20,
+            runs=runs,
+        )
+        self.assertEqual(manifest["planned_request_count"], 30)
+        self.assertEqual(manifest["frozen_tool_budget"], FROZEN_HELDOUT_BUDGET)
+        self.assertNotIn("prompt", " ".join(manifest).lower())
 
     def test_registered_payload_excludes_source_and_evaluator_fields(self):
         run = build_development_grid()[0]
@@ -180,6 +213,8 @@ class P1017DevelopmentGridTests(unittest.TestCase):
                     timeout_seconds=1.0,
                     raw_csv=raw_csv,
                     extra_body={},
+                    p1_record="P1-017-T2-development",
+                    scope="test scope",
                 )
 
             raw_text = raw_csv.read_text(encoding="utf-8")

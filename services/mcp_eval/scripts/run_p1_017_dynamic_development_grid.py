@@ -1,4 +1,4 @@
-"""Run the frozen P1-017 dynamic MCP-Atlas development grid.
+"""Run a frozen P1-017 dynamic MCP-Atlas cohort grid.
 
 The command is a dry run unless ``--execute`` is supplied. Completion rows and
 per-run manifests remain under an ignored output directory because they contain
@@ -33,16 +33,22 @@ from mcp_completion.p1_017_development import (
     SOURCE_PIN,
     P1017DevelopmentRun,
     build_development_grid,
+    build_heldout_grid,
+    build_heldout_preflight_manifest,
     build_preflight_manifest,
     build_registered_condition,
     build_registered_request_payload,
     load_execution_manifest,
     load_frozen_development_rows,
+    load_frozen_heldout_rows,
 )
 
 
 _RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
-_SAFE_SCOPE = "dynamic MCP-Atlas development completion; no evaluator result"
+_DEVELOPMENT_RECORD = "P1-017-T2-development"
+_DEVELOPMENT_SCOPE = "dynamic MCP-Atlas development completion; no evaluator result"
+_HELDOUT_RECORD = "P1-017-T3-heldout"
+_HELDOUT_SCOPE = "dynamic MCP-Atlas held-out completion; no evaluator result"
 
 
 def _classify_http_failure(error: HTTPError, response_body: bytes) -> str:
@@ -82,6 +88,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument(
+        "--cohort",
+        choices=("development", "heldout"),
+        default="development",
+        help="Frozen P1-017 cohort; heldout uses only the T2-selected B=10.",
+    )
     parser.add_argument("--server-url", default="http://127.0.0.1:3000")
     parser.add_argument("--max-turns", type=int, default=20)
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
@@ -97,15 +109,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--execute",
         action="store_true",
-        help="Send the 60 frozen completion requests; omitted means dry-run only.",
+        help="Send the frozen cohort completion requests; omitted means dry-run only.",
     )
     return parser.parse_args()
 
 
-def _run_directory(raw_output_dir: Path, run_id: str) -> Path:
+def _run_directory(raw_output_dir: Path, run_id: str, phase_directory: str) -> Path:
     if not _RUN_ID_PATTERN.fullmatch(run_id):
         raise ValueError("--run-id must use only letters, digits, '.', '_', or '-'")
-    return raw_output_dir / "p1_017_t2" / run_id
+    return raw_output_dir / phase_directory / run_id
 
 
 def _execute_run(
@@ -118,6 +130,8 @@ def _execute_run(
     timeout_seconds: float,
     raw_csv: Path,
     extra_body: dict[str, Any],
+    p1_record: str,
+    scope: str,
 ) -> dict[str, Any]:
     condition = build_registered_condition(run)
     payload = build_registered_request_payload(
@@ -157,8 +171,8 @@ def _execute_run(
             raw_result_bytes=raw_bytes,
             failure_kind=failure_kind,
             http_status=error.code,
-            p1_record="P1-017-T2-development",
-            scope=_SAFE_SCOPE,
+            p1_record=p1_record,
+            scope=scope,
         )
     else:
         raw_row = build_evaluator_result_row(
@@ -180,8 +194,8 @@ def _execute_run(
             condition=condition,
             endpoint_response=endpoint_response,
             raw_result_bytes=raw_bytes,
-            p1_record="P1-017-T2-development",
-            scope=_SAFE_SCOPE,
+            p1_record=p1_record,
+            scope=scope,
         )
     manifest["result_key"] = run.result_key
     manifest["repetition"] = run.repetition
@@ -190,14 +204,30 @@ def _execute_run(
 
 def main() -> int:
     args = _parse_args()
-    development_rows = load_frozen_development_rows(args.input)
-    runs = build_development_grid()
-    preflight = build_preflight_manifest(
-        model=args.model,
-        max_turns=args.max_turns,
-        runs=runs,
-    )
-    run_directory = _run_directory(args.raw_output_dir, args.run_id)
+    if args.cohort == "development":
+        cohort_rows = load_frozen_development_rows(args.input)
+        runs = build_development_grid()
+        preflight = build_preflight_manifest(
+            model=args.model,
+            max_turns=args.max_turns,
+            runs=runs,
+        )
+        phase_directory = "p1_017_t2"
+        p1_record = _DEVELOPMENT_RECORD
+        scope = _DEVELOPMENT_SCOPE
+    else:
+        cohort_rows = load_frozen_heldout_rows(args.input)
+        runs = build_heldout_grid()
+        preflight = build_heldout_preflight_manifest(
+            model=args.model,
+            max_turns=args.max_turns,
+            runs=runs,
+        )
+        phase_directory = "p1_017_t3"
+        p1_record = _HELDOUT_RECORD
+        scope = _HELDOUT_SCOPE
+
+    run_directory = _run_directory(args.raw_output_dir, args.run_id, phase_directory)
     preflight["run_id"] = args.run_id
 
     if not args.execute:
@@ -238,13 +268,15 @@ def main() -> int:
     for index, run in enumerate(runs, start=1):
         manifest = _execute_run(
             run=run,
-            source_row=development_rows[run.task_id],
+            source_row=cohort_rows[run.task_id],
             model=args.model,
             max_turns=args.max_turns,
             server_url=args.server_url,
             timeout_seconds=args.timeout_seconds,
             raw_csv=raw_csv,
             extra_body=extra_body,
+            p1_record=p1_record,
+            scope=scope,
         )
         completed.append(manifest)
         print(f"completed {index}/{len(runs)}: {run.result_key}")
