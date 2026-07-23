@@ -123,6 +123,8 @@ def build_safe_manifest(
     condition: DynamicCondition,
     endpoint_response: Mapping[str, Any],
     raw_result_bytes: bytes,
+    p1_record: str = "P1-016-T2-preflight",
+    scope: str = "dynamic MCP-Atlas result-format compatibility; not a task-preservation result",
 ) -> dict[str, Any]:
     """Create a tracked-safe summary without evaluator data or raw output."""
 
@@ -133,8 +135,8 @@ def build_safe_manifest(
     if not isinstance(cycles, list):
         raise ValueError("dynamic_trace.cycles must be a list")
     return {
-        "p1_record": "P1-016-T2-preflight",
-        "scope": "dynamic MCP-Atlas result-format compatibility; not a task-preservation result",
+        "p1_record": p1_record,
+        "scope": scope,
         "source_pin": source_pin,
         "condition_id": condition.condition_id,
         "model": model,
