@@ -40,4 +40,6 @@ Completion rows and the safe structural manifest are written under ignored
 `completion_results/p1_017_t2/<run-id>/`. The evaluator is intentionally a
 separate `mcp_evals_scores.py` invocation: freeze its model and configuration
 before scoring, and do not run held-out tasks until the development rule picks
-one common budget.
+one common budget. A dynamic endpoint HTTP 500 caused by a model request for a
+tool outside the visible set is recorded as `hidden_tool_request` and the grid
+continues; connection and timeout failures stop the run.
