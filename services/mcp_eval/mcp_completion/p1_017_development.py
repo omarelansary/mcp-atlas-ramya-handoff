@@ -29,7 +29,15 @@ DEVELOPMENT_TASK_IDS = (
     "689af4e653c3905e7b5b25b8",
     "689bd255c0422b257e7dfcc5",
 )
+HELDOUT_TASK_IDS = (
+    "688ba1b3e95696e72dd93e8d",
+    "688fb11183792b921381bd14",
+    "689cd6f8522029b7ad7b2017",
+    "6896416f7b30e5d8ccd7c8be",
+    "68993ef3cf3e953b8ab83fdf",
+)
 CANDIDATE_BUDGETS = (10, 20)
+FROZEN_HELDOUT_BUDGET = 10
 REPETITIONS = (1, 2)
 SELECTOR_IDS = (
     "dynamic_full",
@@ -79,7 +87,7 @@ _CREDENTIAL_FIELD_NAMES = frozenset(
 
 @dataclass(frozen=True)
 class P1017DevelopmentRun:
-    """One completion request in the predeclared development grid."""
+    """One completion request in a frozen P1-017 cohort grid."""
 
     task_id: str
     selector_id: str
@@ -97,6 +105,31 @@ class P1017DevelopmentRun:
 
 def load_frozen_development_rows(input_csv: Path) -> dict[str, dict[str, str]]:
     """Verify the frozen source file and return only its five development rows."""
+
+    return _load_frozen_rows(
+        input_csv,
+        task_ids=DEVELOPMENT_TASK_IDS,
+        cohort_name="development",
+    )
+
+
+def load_frozen_heldout_rows(input_csv: Path) -> dict[str, dict[str, str]]:
+    """Verify the frozen source file and return only its five held-out rows."""
+
+    return _load_frozen_rows(
+        input_csv,
+        task_ids=HELDOUT_TASK_IDS,
+        cohort_name="held-out",
+    )
+
+
+def _load_frozen_rows(
+    input_csv: Path,
+    *,
+    task_ids: Sequence[str],
+    cohort_name: str,
+) -> dict[str, dict[str, str]]:
+    """Verify the source pin and return an ordered frozen cohort."""
 
     file_hash = hashlib.sha256(input_csv.read_bytes()).hexdigest()
     if file_hash != SOURCE_TASK_FILE_SHA256:
@@ -117,14 +150,29 @@ def load_frozen_development_rows(input_csv: Path) -> dict[str, dict[str, str]]:
             raise ValueError(f"source task file contains duplicate task {task_id!r}")
         indexed_rows[task_id] = row
 
-    missing = [task_id for task_id in DEVELOPMENT_TASK_IDS if task_id not in indexed_rows]
+    missing = [task_id for task_id in task_ids if task_id not in indexed_rows]
     if missing:
-        raise ValueError(f"frozen development tasks are missing: {missing!r}")
-    return {task_id: indexed_rows[task_id] for task_id in DEVELOPMENT_TASK_IDS}
+        raise ValueError(f"frozen {cohort_name} tasks are missing: {missing!r}")
+    return {task_id: indexed_rows[task_id] for task_id in task_ids}
 
 
 def build_development_grid() -> tuple[P1017DevelopmentRun, ...]:
     """Return all 60 frozen task/condition/budget/repetition requests."""
+
+    return _build_grid(DEVELOPMENT_TASK_IDS, CANDIDATE_BUDGETS)
+
+
+def build_heldout_grid() -> tuple[P1017DevelopmentRun, ...]:
+    """Return the 30 frozen held-out requests at the T2-selected budget."""
+
+    return _build_grid(HELDOUT_TASK_IDS, (FROZEN_HELDOUT_BUDGET,))
+
+
+def _build_grid(
+    task_ids: Sequence[str],
+    budgets: Sequence[int],
+) -> tuple[P1017DevelopmentRun, ...]:
+    """Build a fixed task/policy/budget/repetition Cartesian grid."""
 
     return tuple(
         P1017DevelopmentRun(
@@ -133,10 +181,10 @@ def build_development_grid() -> tuple[P1017DevelopmentRun, ...]:
             tool_budget=tool_budget,
             repetition=repetition,
         )
-        for tool_budget in CANDIDATE_BUDGETS
+        for tool_budget in budgets
         for selector_id in SELECTOR_IDS
         for repetition in REPETITIONS
-        for task_id in DEVELOPMENT_TASK_IDS
+        for task_id in task_ids
     )
 
 
@@ -200,6 +248,29 @@ def build_preflight_manifest(
         "development_task_ids": list(DEVELOPMENT_TASK_IDS),
         "selector_ids": list(SELECTOR_IDS),
         "candidate_budgets": list(CANDIDATE_BUDGETS),
+        "repetitions": list(REPETITIONS),
+        "planned_request_count": len(runs),
+        "model": model,
+        "max_turns": max_turns,
+    }
+
+
+def build_heldout_preflight_manifest(
+    *,
+    model: str,
+    max_turns: int,
+    runs: Sequence[P1017DevelopmentRun],
+) -> dict[str, Any]:
+    """Return a safe, prompt-free record of the frozen T3 execution plan."""
+
+    return {
+        "p1_record": "P1-017-T3-heldout",
+        "scope": "frozen dynamic MCP-Atlas held-out grid; no execution or score",
+        "source_pin": SOURCE_PIN,
+        "source_task_file_sha256": SOURCE_TASK_FILE_SHA256,
+        "heldout_task_ids": list(HELDOUT_TASK_IDS),
+        "selector_ids": list(SELECTOR_IDS),
+        "frozen_tool_budget": FROZEN_HELDOUT_BUDGET,
         "repetitions": list(REPETITIONS),
         "planned_request_count": len(runs),
         "model": model,
