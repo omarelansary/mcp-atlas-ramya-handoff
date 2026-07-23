@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import unittest
 import json
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
+from urllib.error import HTTPError
 
-from mcp_completion.dynamic_results import build_safe_manifest
+from mcp_completion.dynamic_results import (
+    build_failed_evaluator_result_row,
+    build_safe_failure_manifest,
+    build_safe_manifest,
+)
 from mcp_completion.p1_017_development import (
     CANDIDATE_BUDGETS,
     CONTAINER_IMAGE,
@@ -24,6 +31,7 @@ from mcp_completion.p1_017_development import (
     load_execution_manifest,
     load_frozen_development_rows,
 )
+from scripts.run_p1_017_dynamic_development_grid import _execute_run
 
 
 class P1017DevelopmentGridTests(unittest.TestCase):
@@ -106,6 +114,80 @@ class P1017DevelopmentGridTests(unittest.TestCase):
 
         self.assertEqual(manifest["p1_record"], "P1-017-T2-development")
         self.assertEqual(manifest["scope"], "test scope")
+
+    def test_failure_records_hide_endpoint_details(self):
+        run = build_development_grid()[0]
+        source_row = {
+            "TASK": run.task_id,
+            "PROMPT": "Ignored outside the raw row.",
+            "TRAJECTORY": "evaluator-only",
+            "GTFA_CLAIMS": "evaluator-only",
+        }
+        condition = build_registered_condition(run)
+        raw_row = build_failed_evaluator_result_row(
+            source_row,
+            condition=condition,
+            model="fake/model",
+            elapsed_seconds=1.0,
+            attempts=1,
+            failure_kind="hidden_tool_request",
+            http_status=500,
+        )
+        manifest = build_safe_failure_manifest(
+            source_pin="pin",
+            model="fake/model",
+            condition=condition,
+            raw_result_bytes=b"ignored raw row",
+            failure_kind="hidden_tool_request",
+            http_status=500,
+            p1_record="P1-017-T2-development",
+            scope="test scope",
+        )
+
+        self.assertEqual(raw_row["script_model_response"], "")
+        self.assertEqual(manifest["success"], False)
+        self.assertEqual(manifest["failure_kind"], "hidden_tool_request")
+        self.assertNotIn("Ignored outside", json.dumps(manifest))
+
+    def test_runner_records_hidden_tool_http_failure(self):
+        run = build_development_grid()[0]
+        source_row = {
+            "TASK": run.task_id,
+            "PROMPT": "Read a file.",
+            "TRAJECTORY": "evaluator-only",
+            "GTFA_CLAIMS": "evaluator-only",
+        }
+        failure = HTTPError(
+            "http://localhost/fake",
+            500,
+            "Internal Server Error",
+            None,
+            BytesIO(b'{"detail":{"error":"model requested hidden tool"}}'),
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            raw_csv = Path(temporary_directory) / "raw.csv"
+            with patch(
+                "scripts.run_p1_017_dynamic_development_grid._post_json",
+                side_effect=failure,
+            ):
+                manifest = _execute_run(
+                    run=run,
+                    source_row=source_row,
+                    model="fake/model",
+                    max_turns=20,
+                    server_url="http://127.0.0.1:3000",
+                    timeout_seconds=1.0,
+                    raw_csv=raw_csv,
+                    extra_body={},
+                )
+
+            raw_text = raw_csv.read_text(encoding="utf-8")
+
+        self.assertEqual(manifest["success"], False)
+        self.assertEqual(manifest["failure_kind"], "hidden_tool_request")
+        self.assertEqual(manifest["http_status"], 500)
+        self.assertIn("hidden_tool_request", raw_text)
 
     def test_execution_manifest_requires_frozen_nonsecret_configuration(self):
         with TemporaryDirectory() as temporary_directory:

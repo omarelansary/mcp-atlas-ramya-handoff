@@ -17,12 +17,15 @@ import time
 from io import StringIO
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mcp_completion.dynamic_results import (
+    build_failed_evaluator_result_row,
+    build_safe_failure_manifest,
     build_evaluator_result_row,
     build_safe_manifest,
 )
@@ -40,6 +43,14 @@ from mcp_completion.p1_017_development import (
 
 _RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _SAFE_SCOPE = "dynamic MCP-Atlas development completion; no evaluator result"
+
+
+def _classify_http_failure(error: HTTPError, response_body: bytes) -> str:
+    """Classify only the endpoint failures the frozen grid may count."""
+
+    if error.code == 500 and b"model requested hidden tool" in response_body:
+        return "hidden_tool_request"
+    return "completion_http_error"
 
 
 def _post_json(url: str, payload: dict[str, Any], timeout_seconds: float) -> dict[str, Any]:
@@ -117,31 +128,61 @@ def _execute_run(
         extra_body=extra_body,
     )
     started = time.monotonic()
-    endpoint_response = _post_json(
-        f"{server_url.rstrip('/')}/v2/mcp_eval/run_agent_dynamic",
-        payload,
-        timeout_seconds,
-    )
-    raw_row = build_evaluator_result_row(
-        source_row,
-        endpoint_response=endpoint_response,
-        condition=condition,
-        model=model,
-        elapsed_seconds=time.monotonic() - started,
-        attempts=1,
-    )
-    raw_row["condition_id"] = condition.condition_id
-    raw_row["repetition"] = run.repetition
-    raw_bytes = _append_raw_row(raw_csv, raw_row)
-    manifest = build_safe_manifest(
-        source_pin=SOURCE_PIN,
-        model=model,
-        condition=condition,
-        endpoint_response=endpoint_response,
-        raw_result_bytes=raw_bytes,
-        p1_record="P1-017-T2-development",
-        scope=_SAFE_SCOPE,
-    )
+    try:
+        endpoint_response = _post_json(
+            f"{server_url.rstrip('/')}/v2/mcp_eval/run_agent_dynamic",
+            payload,
+            timeout_seconds,
+        )
+    except HTTPError as error:
+        failure_kind = _classify_http_failure(error, error.read())
+        raw_row = build_failed_evaluator_result_row(
+            source_row,
+            condition=condition,
+            model=model,
+            elapsed_seconds=time.monotonic() - started,
+            attempts=1,
+            failure_kind=failure_kind,
+            http_status=error.code,
+        )
+        raw_row["condition_id"] = condition.condition_id
+        raw_row["repetition"] = run.repetition
+        raw_row["failure_kind"] = failure_kind
+        raw_row["http_status"] = error.code
+        raw_bytes = _append_raw_row(raw_csv, raw_row)
+        manifest = build_safe_failure_manifest(
+            source_pin=SOURCE_PIN,
+            model=model,
+            condition=condition,
+            raw_result_bytes=raw_bytes,
+            failure_kind=failure_kind,
+            http_status=error.code,
+            p1_record="P1-017-T2-development",
+            scope=_SAFE_SCOPE,
+        )
+    else:
+        raw_row = build_evaluator_result_row(
+            source_row,
+            endpoint_response=endpoint_response,
+            condition=condition,
+            model=model,
+            elapsed_seconds=time.monotonic() - started,
+            attempts=1,
+        )
+        raw_row["condition_id"] = condition.condition_id
+        raw_row["repetition"] = run.repetition
+        raw_row["failure_kind"] = ""
+        raw_row["http_status"] = ""
+        raw_bytes = _append_raw_row(raw_csv, raw_row)
+        manifest = build_safe_manifest(
+            source_pin=SOURCE_PIN,
+            model=model,
+            condition=condition,
+            endpoint_response=endpoint_response,
+            raw_result_bytes=raw_bytes,
+            p1_record="P1-017-T2-development",
+            scope=_SAFE_SCOPE,
+        )
     manifest["result_key"] = run.result_key
     manifest["repetition"] = run.repetition
     return manifest

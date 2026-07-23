@@ -151,6 +151,86 @@ def build_safe_manifest(
     }
 
 
+def build_failed_evaluator_result_row(
+    source_row: Mapping[str, Any],
+    *,
+    condition: DynamicCondition,
+    model: str,
+    elapsed_seconds: float,
+    attempts: int,
+    failure_kind: str,
+    http_status: int,
+) -> dict[str, Any]:
+    """Build an evaluator-compatible row for a completion endpoint failure."""
+
+    _require_source_columns(source_row)
+    if not failure_kind:
+        raise ValueError("failure_kind must be nonempty")
+    return {
+        "TASK": source_row["TASK"],
+        "PROMPT": source_row["PROMPT"],
+        "TRAJECTORY": source_row["TRAJECTORY"],
+        "GTFA_CLAIMS": source_row["GTFA_CLAIMS"],
+        "ENABLED_TOOLS": source_row.get("ENABLED_TOOLS", ""),
+        "script_model_response": "",
+        "raw_conversation_history": "[]",
+        "trajectory": "[]",
+        "errors": json.dumps(
+            [{"kind": failure_kind, "http_status": http_status}],
+            ensure_ascii=True,
+            sort_keys=True,
+        ),
+        "trajectory_time": elapsed_seconds,
+        "num_retry": attempts,
+        "exposure_mode": _exposure_mode(condition),
+        "configured_active_tool_names": json.dumps(
+            list(condition.active_tool_names or ()), ensure_ascii=True
+        ),
+        "selector_id": condition.selector_id or "",
+        "tool_budget": condition.tool_budget if condition.tool_budget is not None else "",
+        "dynamic_trace": json.dumps(
+            {"failure_kind": failure_kind, "http_status": http_status},
+            ensure_ascii=True,
+            sort_keys=True,
+        ),
+        "model_id": model,
+    }
+
+
+def build_safe_failure_manifest(
+    *,
+    source_pin: str,
+    model: str,
+    condition: DynamicCondition,
+    raw_result_bytes: bytes,
+    failure_kind: str,
+    http_status: int,
+    p1_record: str = "P1-016-T2-preflight",
+    scope: str = "dynamic MCP-Atlas completion failure; not an evaluator result",
+) -> dict[str, Any]:
+    """Create a prompt-free safe record for an endpoint completion failure."""
+
+    if not failure_kind:
+        raise ValueError("failure_kind must be nonempty")
+    return {
+        "p1_record": p1_record,
+        "scope": scope,
+        "source_pin": source_pin,
+        "condition_id": condition.condition_id,
+        "model": model,
+        "exposure_mode": _exposure_mode(condition),
+        "configured_active_tool_names": list(condition.active_tool_names or ()),
+        "selector_id": condition.selector_id,
+        "tool_budget": condition.tool_budget,
+        "dynamic_cycle_count": 0,
+        "dynamic_cycles": [],
+        "raw_result_sha256": hashlib.sha256(raw_result_bytes).hexdigest(),
+        "success": False,
+        "failure_kind": failure_kind,
+        "http_status": http_status,
+    }
+
+
 def extract_final_response(outputs: Sequence[Mapping[str, Any]]) -> str:
     """Match the official runner's assistant-content-first response extraction."""
 
