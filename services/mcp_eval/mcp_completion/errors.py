@@ -13,6 +13,12 @@ class MCPClientToolExecutionError(Exception):
     pass
 
 
+class MCPClientToolTimeoutError(MCPClientToolExecutionError):
+    """MCP client tool execution exceeded its configured timeout."""
+
+    pass
+
+
 class MCPClientInvalidToolError(Exception):
     """MCP client invalid tool error."""
 
