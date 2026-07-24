@@ -83,6 +83,50 @@ def _append_raw_row(path: Path, row: dict[str, Any]) -> bytes:
     return serialized_row.getvalue().encode("utf-8")
 
 
+def _record_completion_failure(
+    *,
+    source_row: dict[str, str],
+    condition: Any,
+    model: str,
+    elapsed_seconds: float,
+    raw_csv: Path,
+    p1_record: str,
+    scope: str,
+    run: P1017DevelopmentRun,
+    failure_kind: str,
+    http_status: int | None,
+) -> dict[str, Any]:
+    """Write one evaluator-compatible failure row without endpoint details."""
+
+    raw_row = build_failed_evaluator_result_row(
+        source_row,
+        condition=condition,
+        model=model,
+        elapsed_seconds=elapsed_seconds,
+        attempts=1,
+        failure_kind=failure_kind,
+        http_status=http_status,
+    )
+    raw_row["condition_id"] = condition.condition_id
+    raw_row["repetition"] = run.repetition
+    raw_row["failure_kind"] = failure_kind
+    raw_row["http_status"] = "" if http_status is None else http_status
+    raw_bytes = _append_raw_row(raw_csv, raw_row)
+    manifest = build_safe_failure_manifest(
+        source_pin=SOURCE_PIN,
+        model=model,
+        condition=condition,
+        raw_result_bytes=raw_bytes,
+        failure_kind=failure_kind,
+        http_status=http_status,
+        p1_record=p1_record,
+        scope=scope,
+    )
+    manifest["result_key"] = run.result_key
+    manifest["repetition"] = run.repetition
+    return manifest
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, required=True)
@@ -150,29 +194,32 @@ def _execute_run(
         )
     except HTTPError as error:
         failure_kind = _classify_http_failure(error, error.read())
-        raw_row = build_failed_evaluator_result_row(
-            source_row,
+        return _record_completion_failure(
+            source_row=source_row,
             condition=condition,
             model=model,
             elapsed_seconds=time.monotonic() - started,
-            attempts=1,
+            raw_csv=raw_csv,
+            p1_record=p1_record,
+            scope=scope,
+            run=run,
             failure_kind=failure_kind,
             http_status=error.code,
         )
-        raw_row["condition_id"] = condition.condition_id
-        raw_row["repetition"] = run.repetition
-        raw_row["failure_kind"] = failure_kind
-        raw_row["http_status"] = error.code
-        raw_bytes = _append_raw_row(raw_csv, raw_row)
-        manifest = build_safe_failure_manifest(
-            source_pin=SOURCE_PIN,
-            model=model,
+    except TimeoutError:
+        # The approved recovery records only the frozen local request timeout.
+        # Connection and other transport errors remain hard stops.
+        return _record_completion_failure(
+            source_row=source_row,
             condition=condition,
-            raw_result_bytes=raw_bytes,
-            failure_kind=failure_kind,
-            http_status=error.code,
+            model=model,
+            elapsed_seconds=time.monotonic() - started,
+            raw_csv=raw_csv,
             p1_record=p1_record,
             scope=scope,
+            run=run,
+            failure_kind="completion_timeout",
+            http_status=None,
         )
     else:
         raw_row = build_evaluator_result_row(
