@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from .base_client import MCPClient
-from ..errors import MCPClientToolExecutionError
+from ..errors import MCPClientToolExecutionError, MCPClientToolTimeoutError
 from ..schema import ToolDefinition, CallToolResponse, TextContent
 from ..config import config
 
@@ -89,7 +89,7 @@ class SandboxMCPClient(MCPClient):
 
         except httpx.ReadTimeout:
             logger.error(f"Tool {tool_name} timed out after {self.tool_call_timeout}s")
-            raise MCPClientToolExecutionError(
+            raise MCPClientToolTimeoutError(
                 f"Tool {tool_name} timed out after {self.tool_call_timeout}s"
             )
         except Exception as error:

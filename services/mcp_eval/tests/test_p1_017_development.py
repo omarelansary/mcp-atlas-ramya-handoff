@@ -224,6 +224,44 @@ class P1017DevelopmentGridTests(unittest.TestCase):
         self.assertEqual(manifest["http_status"], 500)
         self.assertIn("hidden_tool_request", raw_text)
 
+    def test_runner_records_structured_dynamic_failure_code(self):
+        run = build_development_grid()[0]
+        source_row = {
+            "TASK": run.task_id,
+            "PROMPT": "Read a file.",
+            "TRAJECTORY": "evaluator-only",
+            "GTFA_CLAIMS": "evaluator-only",
+        }
+        failure = HTTPError(
+            "http://localhost/fake",
+            500,
+            "Internal Server Error",
+            None,
+            BytesIO(b'{"detail":{"failure_code":"max_turns_exhausted"}}'),
+        )
+
+        with TemporaryDirectory() as temporary_directory:
+            raw_csv = Path(temporary_directory) / "raw.csv"
+            with patch(
+                "scripts.run_p1_017_dynamic_development_grid._post_json",
+                side_effect=failure,
+            ):
+                manifest = _execute_run(
+                    run=run,
+                    source_row=source_row,
+                    model="fake/model",
+                    max_turns=20,
+                    server_url="http://127.0.0.1:3000",
+                    timeout_seconds=1.0,
+                    raw_csv=raw_csv,
+                    extra_body={},
+                    p1_record="P1-017-T2-development",
+                    scope="test scope",
+                )
+
+        self.assertEqual(manifest["failure_kind"], "max_turns_exhausted")
+        self.assertEqual(manifest["http_status"], 500)
+
     def test_runner_records_only_the_local_completion_timeout(self):
         run = build_development_grid()[0]
         source_row = {

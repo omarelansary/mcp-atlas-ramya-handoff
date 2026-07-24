@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from mcp_completion.errors import MCPClientToolTimeoutError
 from mcp_completion.main import app
 from mcp_completion.schema import CallToolResponse, TextContent
 
@@ -70,6 +71,12 @@ class _FakeSandboxMcpClient:
         return CallToolResponse(
             content=[TextContent(type="text", text="ok")], isError=False
         )
+
+
+class _TimedOutSandboxMcpClient(_FakeSandboxMcpClient):
+    async def call_tool(self, tool_name, args):
+        self.calls.append((tool_name, args))
+        raise MCPClientToolTimeoutError("tool call timed out")
 
 
 class _SequenceCompletion:
@@ -275,6 +282,77 @@ class DynamicEndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 500)
         self.assertEqual(_FakeSandboxMcpClient.instances[0].calls, [])
+        self.assertEqual(
+            response.json(), {"detail": {"failure_code": "hidden_tool_request"}}
+        )
+
+    def test_dynamic_endpoint_codes_max_turn_exhaustion_without_error_text(self):
+        completion = _SequenceCompletion(
+            [
+                _CompletionResult(
+                    _AssistantMessage(
+                        tool_calls=[
+                            _ToolCall(
+                                id="call-1",
+                                function={"name": "files_read", "arguments": "{}"},
+                            )
+                        ]
+                    )
+                )
+            ]
+        )
+
+        with patch(
+            "mcp_completion.agent_eval.SandboxMCPClient", _FakeSandboxMcpClient
+        ), patch("mcp_completion.agent_eval.create_completion", completion):
+            response = TestClient(app).post(
+                "/v2/mcp_eval/run_agent_dynamic",
+                json={
+                    "model": "fake/model",
+                    "messages": [{"role": "user", "content": "Read a file."}],
+                    "activeToolNames": ["files_read"],
+                    "maxTurns": 1,
+                },
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.json(), {"detail": {"failure_code": "max_turns_exhausted"}}
+        )
+
+    def test_dynamic_endpoint_codes_mcp_tool_timeout_without_error_text(self):
+        completion = _SequenceCompletion(
+            [
+                _CompletionResult(
+                    _AssistantMessage(
+                        tool_calls=[
+                            _ToolCall(
+                                id="call-1",
+                                function={"name": "files_read", "arguments": "{}"},
+                            )
+                        ]
+                    )
+                )
+            ]
+        )
+
+        with patch(
+            "mcp_completion.agent_eval.SandboxMCPClient", _TimedOutSandboxMcpClient
+        ), patch("mcp_completion.agent_eval.create_completion", completion):
+            response = TestClient(app).post(
+                "/v2/mcp_eval/run_agent_dynamic",
+                json={
+                    "model": "fake/model",
+                    "messages": [{"role": "user", "content": "Read a file."}],
+                    "activeToolNames": ["files_read"],
+                    "maxTurns": 2,
+                },
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.json(), {"detail": {"failure_code": "mcp_tool_call_timeout"}}
+        )
 
 
 if __name__ == "__main__":

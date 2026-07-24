@@ -14,8 +14,9 @@ from .agent_eval import (
     handle_run_mcp_eval,
     run_dynamic_mcp_eval_request,
 )
+from .dynamic_eval import DynamicMcpEvalError, HiddenToolRequestError
 from .schema import RunAgentAPIRequestBody, RunDynamicAgentAPIRequestBody
-from .errors import MCPClientToolExecutionError
+from .errors import MCPClientToolExecutionError, MCPClientToolTimeoutError
 from .config import config
 
 # Configure logging
@@ -29,6 +30,22 @@ app = FastAPI(
     description="Standalone MCP evaluation environment",
     version="0.1.0",
 )
+
+
+def _dynamic_failure_code(error: Exception) -> str:
+    """Return a stable, prompt-free code for dynamic-route failures."""
+
+    if isinstance(error, HiddenToolRequestError):
+        return "hidden_tool_request"
+    if isinstance(error, MCPClientToolTimeoutError):
+        return "mcp_tool_call_timeout"
+    if isinstance(error, MCPClientToolExecutionError):
+        return "mcp_tool_execution_error"
+    if isinstance(error, DynamicMcpEvalError):
+        if str(error) == "model did not finish within max_turns":
+            return "max_turns_exhausted"
+        return "dynamic_contract_error"
+    return "dynamic_host_error"
 
 
 @app.middleware("http")
@@ -109,15 +126,18 @@ async def run_agent_dynamic(
             "outputs": list(dynamic_result.outputs),
             "dynamic_trace": dynamic_safe_trace(dynamic_result),
         }
-    except MCPClientToolExecutionError as error:
-        logger.error(f"Dynamic MCP client tool execution error: {error}")
-        raise HTTPException(status_code=500, detail={"error": str(error)})
     except Exception as error:
-        logger.error(f"Error during dynamic MCP eval execution: {error}", exc_info=True)
+        failure_code = _dynamic_failure_code(error)
+        logger.error(
+            "Dynamic MCP eval failed with %s: %s",
+            failure_code,
+            error,
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=500,
-            detail={"error": f"Unknown error during dynamic mcp_eval: {str(error)}"},
-        )
+            detail={"failure_code": failure_code},
+        ) from error
 
 
 def main():

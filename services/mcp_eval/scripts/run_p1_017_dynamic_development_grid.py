@@ -52,7 +52,23 @@ _HELDOUT_SCOPE = "dynamic MCP-Atlas held-out completion; no evaluator result"
 
 
 def _classify_http_failure(error: HTTPError, response_body: bytes) -> str:
-    """Classify only the endpoint failures the frozen grid may count."""
+    """Classify a prompt-free failure code returned by the dynamic endpoint."""
+
+    try:
+        payload = json.loads(response_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        payload = None
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    failure_code = detail.get("failure_code") if isinstance(detail, dict) else None
+    if failure_code in {
+        "hidden_tool_request",
+        "max_turns_exhausted",
+        "mcp_tool_call_timeout",
+        "mcp_tool_execution_error",
+        "dynamic_contract_error",
+        "dynamic_host_error",
+    }:
+        return failure_code
 
     if error.code == 500 and b"model requested hidden tool" in response_body:
         return "hidden_tool_request"
