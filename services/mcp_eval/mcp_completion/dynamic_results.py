@@ -159,7 +159,7 @@ def build_failed_evaluator_result_row(
     elapsed_seconds: float,
     attempts: int,
     failure_kind: str,
-    http_status: int,
+    http_status: int | None,
 ) -> dict[str, Any]:
     """Build an evaluator-compatible row for a completion endpoint failure."""
 
@@ -204,7 +204,7 @@ def build_safe_failure_manifest(
     condition: DynamicCondition,
     raw_result_bytes: bytes,
     failure_kind: str,
-    http_status: int,
+    http_status: int | None,
     p1_record: str = "P1-016-T2-preflight",
     scope: str = "dynamic MCP-Atlas completion failure; not an evaluator result",
 ) -> dict[str, Any]:

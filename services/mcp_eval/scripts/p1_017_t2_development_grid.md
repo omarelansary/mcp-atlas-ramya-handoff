@@ -57,5 +57,6 @@ Completion rows and the safe structural manifest are written under ignored
 `completion_results/p1_017_t3/<run-id>/`. The evaluator is intentionally a
 separate `mcp_evals_scores.py` invocation. A dynamic endpoint HTTP 500 caused
 by a model request for a tool outside the visible set is recorded as
-`hidden_tool_request` and the grid continues; connection and timeout failures
-stop the run.
+`hidden_tool_request` and the grid continues. The frozen local completion
+timeout is recorded as `completion_timeout` with no HTTP status and the grid
+continues. Connection and other transport failures stop the run.

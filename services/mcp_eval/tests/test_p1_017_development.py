@@ -8,7 +8,7 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 from mcp_completion.dynamic_results import (
     build_failed_evaluator_result_row,
@@ -223,6 +223,73 @@ class P1017DevelopmentGridTests(unittest.TestCase):
         self.assertEqual(manifest["failure_kind"], "hidden_tool_request")
         self.assertEqual(manifest["http_status"], 500)
         self.assertIn("hidden_tool_request", raw_text)
+
+    def test_runner_records_only_the_local_completion_timeout(self):
+        run = build_development_grid()[0]
+        source_row = {
+            "TASK": run.task_id,
+            "PROMPT": "Read a file.",
+            "TRAJECTORY": "evaluator-only",
+            "GTFA_CLAIMS": "evaluator-only",
+        }
+
+        with TemporaryDirectory() as temporary_directory:
+            raw_csv = Path(temporary_directory) / "raw.csv"
+            with patch(
+                "scripts.run_p1_017_dynamic_development_grid._post_json",
+                side_effect=TimeoutError(),
+            ):
+                manifest = _execute_run(
+                    run=run,
+                    source_row=source_row,
+                    model="fake/model",
+                    max_turns=20,
+                    server_url="http://127.0.0.1:3000",
+                    timeout_seconds=1.0,
+                    raw_csv=raw_csv,
+                    extra_body={},
+                    p1_record="P1-017-T3-heldout",
+                    scope="test scope",
+                )
+
+            raw_text = raw_csv.read_text(encoding="utf-8")
+
+        self.assertEqual(manifest["success"], False)
+        self.assertEqual(manifest["failure_kind"], "completion_timeout")
+        self.assertIsNone(manifest["http_status"])
+        self.assertIn("completion_timeout", raw_text)
+        self.assertNotIn("TimeoutError", raw_text)
+
+    def test_runner_keeps_connection_errors_as_hard_stops(self):
+        run = build_development_grid()[0]
+        source_row = {
+            "TASK": run.task_id,
+            "PROMPT": "Read a file.",
+            "TRAJECTORY": "evaluator-only",
+            "GTFA_CLAIMS": "evaluator-only",
+        }
+
+        with TemporaryDirectory() as temporary_directory:
+            raw_csv = Path(temporary_directory) / "raw.csv"
+            with patch(
+                "scripts.run_p1_017_dynamic_development_grid._post_json",
+                side_effect=URLError("connection refused"),
+            ):
+                with self.assertRaises(URLError):
+                    _execute_run(
+                        run=run,
+                        source_row=source_row,
+                        model="fake/model",
+                        max_turns=20,
+                        server_url="http://127.0.0.1:3000",
+                        timeout_seconds=1.0,
+                        raw_csv=raw_csv,
+                        extra_body={},
+                        p1_record="P1-017-T3-heldout",
+                        scope="test scope",
+                    )
+
+            self.assertFalse(raw_csv.exists())
 
     def test_execution_manifest_requires_frozen_nonsecret_configuration(self):
         with TemporaryDirectory() as temporary_directory:
