@@ -8,9 +8,10 @@ separate interfaces.
 
 1. Inspect `git status -sb`, the current branch, its merge base, and its diff
    from `origin/main`.
-2. Read `thesis-main/docs/traceability/thesis_program_ledger.md`, the current
-   P1 task/state, and the private P1-017 registry before changing the dynamic
-   adapter.
+2. Read `thesis-main/docs/traceability/thesis_program_ledger.md`,
+   `thesis-main/docs/traceability/cross_repository_delivery_status.md`, the
+   current P1 task/state, and the private P1-017 registry before changing the
+   dynamic adapter.
 3. Use one branch for one task. Start P1-017 work from current `origin/main`,
    not from an archival or handoff branch.
 
@@ -48,3 +49,6 @@ separate interfaces.
   committing. Record blocked environment checks rather than assuming success.
 - Keep a focused commit history and merge only a branch whose scope matches its
   name and task record.
+- When adapter work changes a cross-repository pin, completed checkpoint, or
+  next action, include a focused `thesis-main` status-file update or
+  explicitly record why it cannot yet be updated.
