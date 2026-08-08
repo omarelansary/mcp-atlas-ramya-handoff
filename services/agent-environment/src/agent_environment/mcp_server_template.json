@@ -20,10 +20,8 @@
       }
     },
     "arxiv": {
-      "command": "uvx",
-      "args": [
-        "arxiv-mcp-server==0.2.11"
-      ]
+      "command": "/root/.local/share/uv/tools/arxiv-mcp-server/bin/arxiv-mcp-server",
+      "args": []
     },
     "brave-search": {
       "command": "npx",
@@ -35,23 +33,20 @@
       }
     },
     "calculator": {
-      "command": "uvx",
-      "args": [
-        "mcp-server-calculator==0.2.0"
-      ]
+      "command": "/root/.local/share/uv/tools/mcp-server-calculator/bin/mcp-server-calculator",
+      "args": []
     },
     "cli-mcp-server": {
-      "command": "uvx",
-      "args": [
-        "cli-mcp-server==0.2.5"
-      ],
+      "command": "/root/.local/share/uv/tools/cli-mcp-server/bin/cli-mcp-server",
+      "args": [],
       "env": {
         "ALLOWED_DIR": "/data",
         "ALLOWED_COMMANDS": "ls,cat,find",
         "ALLOWED_FLAGS": "",
         "MAX_COMMAND_LENGTH": "1024",
         "COMMAND_TIMEOUT": "30",
-        "ALLOW_SHELL_OPERATORS": "false"
+        "ALLOW_SHELL_OPERATORS": "false",
+        "PYTHONHASHSEED": "0"
       }
     },
     "clinicaltrialsgov-mcp-server": {
@@ -70,10 +65,8 @@
       ]
     },
     "ddg-search": {
-      "command": "uvx",
-      "args": [
-        "duckduckgo-mcp-server==0.1.1"
-      ]
+      "command": "/root/.local/share/uv/tools/duckduckgo-mcp-server/bin/duckduckgo-mcp-server",
+      "args": []
     },
     "desktop-commander": {
       "command": "npx",
@@ -100,10 +93,8 @@
       }
     },
     "fetch": {
-      "command": "uvx",
-      "args": [
-        "mcp-server-fetch==2025.4.7"
-      ]
+      "command": "/root/.local/share/uv/tools/mcp-server-fetch/bin/mcp-server-fetch",
+      "args": []
     },
     "filesystem": {
       "command": "npx",
@@ -113,10 +104,8 @@
       ]
     },
     "git": {
-      "command": "uvx",
-      "args": [
-        "mcp-server-git==2025.7.1"
-      ]
+      "command": "/root/.local/share/uv/tools/mcp-server-git/bin/mcp-server-git",
+      "args": []
     },
     "github": {
       "command": "npx",
@@ -223,10 +212,8 @@
       ]
     },
     "osm-mcp-server": {
-      "command": "uvx",
-      "args": [
-        "osm-mcp-server==0.1.1"
-      ]
+      "command": "/root/.local/share/uv/tools/osm-mcp-server/bin/osm-mcp-server",
+      "args": []
     },
     "oxylabs": {
       "command": "uvx",
@@ -239,11 +226,8 @@
       }
     },
     "pubmed": {
-      "command": "uvx",
+      "command": "/opt/mcp-tools/pubmed/bin/python",
       "args": [
-        "--from",
-        "git+https://github.com/geobio/PubMed-MCP-Server.git",
-        "python",
         "-m",
         "pubmed_server"
       ]
