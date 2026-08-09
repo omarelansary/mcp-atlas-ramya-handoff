@@ -1,0 +1,53 @@
+{
+  "purpose": "Pinned compatibility recovery for MCP-Atlas P1-025 no-key discovery. Covers the seven Python servers that failed on 2026-08-08, plus osm-mcp-server, which newly failed the same way in the build-02 fresh-container health check the same day after remaining on request-time uvx resolution.",
+  "python": "3.12",
+  "mcp_python_sdk": "mcp==1.12.4",
+  "servers": {
+    "arxiv": {
+      "package": "arxiv-mcp-server==0.2.11",
+      "command": "/root/.local/share/uv/tools/arxiv-mcp-server/bin/arxiv-mcp-server",
+      "args": []
+    },
+    "calculator": {
+      "package": "mcp-server-calculator==0.2.0",
+      "command": "/root/.local/share/uv/tools/mcp-server-calculator/bin/mcp-server-calculator",
+      "args": []
+    },
+    "cli-mcp-server": {
+      "package": "cli-mcp-server==0.2.5",
+      "command": "/root/.local/share/uv/tools/cli-mcp-server/bin/cli-mcp-server",
+      "args": []
+    },
+    "ddg-search": {
+      "package": "duckduckgo-mcp-server==0.1.1",
+      "command": "/root/.local/share/uv/tools/duckduckgo-mcp-server/bin/duckduckgo-mcp-server",
+      "args": []
+    },
+    "fetch": {
+      "package": "mcp-server-fetch==2025.4.7",
+      "command": "/root/.local/share/uv/tools/mcp-server-fetch/bin/mcp-server-fetch",
+      "args": []
+    },
+    "git": {
+      "package": "mcp-server-git==2025.7.1",
+      "command": "/root/.local/share/uv/tools/mcp-server-git/bin/mcp-server-git",
+      "args": []
+    },
+    "pubmed": {
+      "source": "git+https://github.com/geobio/PubMed-MCP-Server.git@e452cfc7d23cd4c0248c177d7814df3d9e82ea3b",
+      "environment": "/opt/mcp-tools/pubmed",
+      "command": "/opt/mcp-tools/pubmed/bin/python",
+      "args": [
+        "-m",
+        "pubmed_server"
+      ]
+    },
+    "osm-mcp-server": {
+      "package": "osm-mcp-server==0.1.1",
+      "python": "3.13",
+      "python_note": "osm-mcp-server==0.1.1 declares Python>=3.13; the shared 3.12 pin used for the other seven servers fails dependency resolution for this package.",
+      "command": "/root/.local/share/uv/tools/osm-mcp-server/bin/osm-mcp-server",
+      "args": []
+    }
+  }
+}

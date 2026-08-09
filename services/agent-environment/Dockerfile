@@ -1,5 +1,10 @@
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
+# Fix the Python interpreter's string-hash seed so that any server-side code
+# iterating an unordered set/dict produces the same order on every container
+# start. Does not change any package, server, task, or evaluator behavior.
+ENV PYTHONHASHSEED=0
+
 RUN apt-get update && apt-get install -y npm bash git procps curl gettext-base && rm -rf /var/lib/apt/lists/*
 
 # Need to install nodejs from elsewhere, because bookworm-slim is based on debian, and the available version of nodejs is 18, which is too old
@@ -8,11 +13,16 @@ RUN apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
 
 # Pre-install all MCP server packages (NPX and UVX), saves approx 1 minute of startup time
 COPY dev_scripts/install_mcp_packages.sh /
-RUN /install_mcp_packages.sh && rm /install_mcp_packages.sh
+RUN sed -i 's/\r$//' /install_mcp_packages.sh && /install_mcp_packages.sh && rm /install_mcp_packages.sh
 
 # Copy project files and set up workspace
 WORKDIR /agent-environment
 COPY . .
+# The Windows working-tree checkout used to build this recovery candidate
+# checks out entrypoint.sh with CRLF line endings, which breaks its shebang
+# under Linux exec. Normalize it the same way install_mcp_packages.sh is
+# normalized above, without altering its content or executable bit.
+RUN sed -i 's/\r$//' /agent-environment/entrypoint.sh
 RUN uv venv --python 3.12
 
 # Move /agent-environment/data to /data

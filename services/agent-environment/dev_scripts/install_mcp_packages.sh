@@ -30,14 +30,23 @@ npm install -g \
 
 echo "Installing UVX MCP server packages..."
 # Pre-install all UVX MCP server packages to eliminate download time during runtime
-uv tool install arxiv-mcp-server==0.2.11
-uv tool install mcp-server-calculator==0.2.0
-uv tool install cli-mcp-server==0.2.5
-uv tool install duckduckgo-mcp-server==0.1.1
-uv tool install mcp-server-fetch==2025.4.7
-uv tool install mcp-server-git==2025.7.1
-uv tool install osm-mcp-server==0.1.1
+MCP_PYTHON_SDK_VERSION="mcp==1.12.4"
+MCP_TOOL_PYTHON_VERSION="3.12"
+uv tool install --python "$MCP_TOOL_PYTHON_VERSION" --with "$MCP_PYTHON_SDK_VERSION" arxiv-mcp-server==0.2.11
+uv tool install --python "$MCP_TOOL_PYTHON_VERSION" --with "$MCP_PYTHON_SDK_VERSION" mcp-server-calculator==0.2.0
+uv tool install --python "$MCP_TOOL_PYTHON_VERSION" --with "$MCP_PYTHON_SDK_VERSION" cli-mcp-server==0.2.5
+uv tool install --python "$MCP_TOOL_PYTHON_VERSION" --with "$MCP_PYTHON_SDK_VERSION" duckduckgo-mcp-server==0.1.1
+uv tool install --python "$MCP_TOOL_PYTHON_VERSION" --with "$MCP_PYTHON_SDK_VERSION" mcp-server-fetch==2025.4.7
+uv tool install --python "$MCP_TOOL_PYTHON_VERSION" --with "$MCP_PYTHON_SDK_VERSION" mcp-server-git==2025.7.1
+uv tool install --python 3.13 --with "$MCP_PYTHON_SDK_VERSION" osm-mcp-server==0.1.1
 uv tool install oxylabs-mcp==0.4.1
 uv tool install mcp-server-twelve-data==0.2.5
 
-echo "All UVX/NPX MCP packages installation complete. Ignored any that install from github!" 
+# The pinned PubMed source has no executable entry point, so it needs an
+# explicit environment rather than `uv tool install`.
+uv venv --python "$MCP_TOOL_PYTHON_VERSION" /opt/mcp-tools/pubmed
+uv pip install --python /opt/mcp-tools/pubmed/bin/python \
+    "$MCP_PYTHON_SDK_VERSION" \
+    "git+https://github.com/geobio/PubMed-MCP-Server.git@e452cfc7d23cd4c0248c177d7814df3d9e82ea3b"
+
+echo "All UVX/NPX MCP packages installation complete. Ignored any that install from github!"
