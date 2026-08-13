@@ -13,7 +13,20 @@ from .dynamic_results import DynamicCondition, build_dynamic_payload
 
 
 SOURCE_PIN = "0f307af813334c5174dc0b560c29ce3d5828ee50"
-SOURCE_TASK_FILE_SHA256 = "d3bbb0119d1c822cdfad158316052c6a96e332d6b6b25f80f501dce6826b6929"
+SOURCE_TASK_FILE_SHA256 = "4685bf3ced735391de5e28d6316c5d520832c59aed479a9b505e76b7160dec8b"
+"""SHA-256 of the frozen ``sample_tasks.csv``, taken over LF-normalised bytes.
+
+Normalisation is load-bearing, not cosmetic. The repository sets
+``* text=auto``, so this file is stored with LF in Git and checked out with
+CRLF on Windows. Hashing the raw bytes therefore yields a different digest per
+platform. The previous constant was computed on a Windows checkout: it passed
+there and failed on Linux, which is where the grid actually runs. Normalising
+before hashing makes the pin platform-independent, and the value equals the
+hash of the file's content as Git stores it.
+
+Same class of defect as the CRLF entrypoint fix recorded in the P1-025
+runtime-recovery gate.
+"""
 CORE_RELEASE_TAG = "active-registry-core/v0.1.0"
 CORE_COMMIT = "e749c6cfa24c1235a548a18d6a1e7f261abbb252"
 CONTAINER_IMAGE = (
@@ -131,7 +144,11 @@ def _load_frozen_rows(
 ) -> dict[str, dict[str, str]]:
     """Verify the source pin and return an ordered frozen cohort."""
 
-    file_hash = hashlib.sha256(input_csv.read_bytes()).hexdigest()
+    # Read in text mode: Python's universal newlines collapse CRLF to LF,
+    # so the pin does not depend on checkout platform. See
+    # SOURCE_TASK_FILE_SHA256 for why that matters.
+    normalised = input_csv.read_text(encoding="utf-8").encode("utf-8")
+    file_hash = hashlib.sha256(normalised).hexdigest()
     if file_hash != SOURCE_TASK_FILE_SHA256:
         raise ValueError(
             "P1-017 requires the frozen sample_tasks.csv SHA-256; "
