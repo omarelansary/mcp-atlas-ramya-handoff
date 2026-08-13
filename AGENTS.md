@@ -8,11 +8,14 @@ separate interfaces.
 
 1. Inspect `git status -sb`, the current branch, its merge base, and its diff
    from `origin/main`.
-2. Read `thesis-main/docs/traceability/thesis_program_ledger.md`,
+2. Read `ADAPTER_STATE.md` in this repository for the local delivery position
+   and whether any adapter task is currently open.
+3. Read `thesis-main/docs/traceability/thesis_program_ledger.md`,
    `thesis-main/docs/traceability/cross_repository_delivery_status.md`, the
    current P1 task/state, and the private P1-017 registry before changing the
-   dynamic adapter.
-3. Use one branch for one task. Start P1-017 work from current `origin/main`,
+   dynamic adapter. Where `ADAPTER_STATE.md` and the cross-repository status
+   disagree, the cross-repository status is authoritative.
+4. Use one branch for one task. Start P1-017 work from current `origin/main`,
    not from an archival or handoff branch.
 
 ## Interface Boundary
