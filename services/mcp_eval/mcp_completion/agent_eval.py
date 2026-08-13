@@ -25,6 +25,9 @@ from .errors import MCPClientToolExecutionError
 from .config import config
 from .dynamic_eval import run_dynamic_mcp_eval
 from .dynamic_selectors import build_registered_dynamic_selector
+from .p1_026_ranker import build_p1_026_ranker
+from .p1_026_selectors import build_registered_p1_026_dynamic_selector
+from active_registry_core import REGISTERED_P1_026_SELECTOR_IDS
 
 logger = logging.getLogger(__name__)
 
@@ -171,14 +174,24 @@ async def run_dynamic_mcp_eval_request(
         sandbox_url=config.MCP_SERVER_URL,
         enabled_tools=None,
     )
-    selector = (
-        build_registered_dynamic_selector(
-            selector_id=body.selector_id,
-            tool_budget=body.tool_budget,
-        )
-        if body.selector_id is not None and body.tool_budget is not None
-        else _ConfiguredDynamicSelector(body.active_tool_names)
-    )
+    if body.selector_id is not None and body.tool_budget is not None:
+        if body.selector_id in REGISTERED_P1_026_SELECTOR_IDS:
+            # P1-026 conditions rank with hybrid_three_way, which needs models.
+            # The ranker is built once per process and cached, so weights are
+            # not reloaded per cycle or per run.
+            selector = build_registered_p1_026_dynamic_selector(
+                selector_id=body.selector_id,
+                tool_budget=body.tool_budget,
+                messages=body.messages,
+                ranker=build_p1_026_ranker(),
+            )
+        else:
+            selector = build_registered_dynamic_selector(
+                selector_id=body.selector_id,
+                tool_budget=body.tool_budget,
+            )
+    else:
+        selector = _ConfiguredDynamicSelector(body.active_tool_names)
     return await run_dynamic_mcp_eval(
         mcp_client=mcp_client,
         selector=selector,

@@ -26,7 +26,7 @@ dependencies = [
     "matplotlib>=3.6.0",
     "nest-asyncio>=1.5.0",
     "datasets>=2.14.0",
-    "active-registry-core @ git+https://github.com/Automatic-Tool-Discovery/master-thesis-on-demand-schema-resolution.git@224e65344104bdd59182a739a7a9adfbc26ad34d#subdirectory=packages/active_registry_core",
+    "active-registry-core @ git+https://github.com/Automatic-Tool-Discovery/master-thesis-on-demand-schema-resolution.git@1ef4a2071929633a3c7e298190971f0d7496cb36#subdirectory=packages/active_registry_core",
 ]
 
 [project.scripts]

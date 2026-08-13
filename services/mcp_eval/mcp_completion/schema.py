@@ -141,6 +141,10 @@ class RunDynamicAgentAPIRequestBody(BaseModel):
             "dynamic_full",
             "dynamic_stateless_semantic",
             "dynamic_called_tool_retention",
+            "p1_026_full",
+            "p1_026_one_shot",
+            "p1_026_stateless_repeat",
+            "p1_026_registry",
         ]
     ] = Field(None, alias="selectorId")
     tool_budget: Optional[int] = Field(None, alias="toolBudget", ge=1)
