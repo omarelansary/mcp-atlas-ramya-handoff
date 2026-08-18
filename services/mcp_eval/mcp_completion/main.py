@@ -125,6 +125,9 @@ async def run_agent_dynamic(
         return {
             "outputs": list(dynamic_result.outputs),
             "dynamic_trace": dynamic_safe_trace(dynamic_result),
+            # Run metadata, deliberately outside "outputs" so that stream stays
+            # a pure message list for consumers that index into it.
+            "usage": dynamic_result.usage,
         }
     except Exception as error:
         failure_code = _dynamic_failure_code(error)

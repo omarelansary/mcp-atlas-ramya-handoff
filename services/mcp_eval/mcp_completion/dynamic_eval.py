@@ -99,6 +99,9 @@ class DynamicMcpEvalResult:
     outputs: tuple[dict[str, Any], ...]
     cycles: tuple[DynamicCycleTrace, ...]
     final_text: str | None
+    # Sibling of outputs, not an entry in it: outputs is a message stream and
+    # consumers index into it. Token accounting is run metadata.
+    usage: dict[str, Any] | None = None
 
 
 async def run_dynamic_mcp_eval(
@@ -125,6 +128,11 @@ async def run_dynamic_mcp_eval(
     outputs: list[dict[str, Any]] = []
     cycles: list[DynamicCycleTrace] = []
     final_text: str | None = None
+    # Token accounting for the dynamic route. The fixed-list loop already
+    # reports this; without the same here a dynamic run's cost is unmeasurable,
+    # which matters most on this route because full exposure re-sends all 126
+    # tool schemas every cycle.
+    run_usage: dict[str, Any] = {"cycles": 0, "reported_cycles": 0}
 
     for cycle_index in range(max_turns):
         raw_tools = await mcp_client.list_raw_tools()
@@ -165,6 +173,16 @@ async def run_dynamic_mcp_eval(
             extra_body=extra_body,
         )
         assistant_message = completion_result.message
+        run_usage["cycles"] += 1
+        # getattr, not attribute access: the completion callable is injectable
+        # and test fakes implement only .message. Token accounting must never be
+        # the reason a run fails.
+        reported = getattr(completion_result, "usage", None)
+        if reported:
+            run_usage["reported_cycles"] += 1
+            for key, value in reported.items():
+                if isinstance(value, int):
+                    run_usage[key] = run_usage.get(key, 0) + value
         visible_messages.append(assistant_message)
         outputs.append({"type": "message", "data": assistant_message.model_dump()})
 
@@ -196,10 +214,15 @@ async def run_dynamic_mcp_eval(
     else:
         raise DynamicMcpEvalError("model did not finish within max_turns")
 
+    run_usage["transient_tool_retries"] = getattr(
+        mcp_client, "transient_retries", 0
+    )
+
     return DynamicMcpEvalResult(
         outputs=tuple(copy.deepcopy(outputs)),
         cycles=tuple(cycles),
         final_text=final_text,
+        usage=run_usage,
     )
 
 

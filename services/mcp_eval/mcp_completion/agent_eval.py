@@ -198,11 +198,18 @@ async def run_dynamic_mcp_eval_request(
             # P1-026 conditions rank with hybrid_three_way, which needs models.
             # The ranker is built once per process and cached, so weights are
             # not reloaded per cycle or per run.
+            #
+            # p1_026_full exposes every tool and ranks nothing, so it must not
+            # require the ranking models. Building them unconditionally made the
+            # control condition fail in environments without
+            # sentence-transformers -- contradicting the ranker's own error
+            # message, which states that p1_026_full runs without it.
+            needs_ranker = body.selector_id != "p1_026_full"
             selector = build_registered_p1_026_dynamic_selector(
                 selector_id=body.selector_id,
                 tool_budget=body.tool_budget,
                 messages=body.messages,
-                ranker=build_p1_026_ranker(),
+                ranker=build_p1_026_ranker() if needs_ranker else None,
             )
         else:
             selector = build_registered_dynamic_selector(
