@@ -25,6 +25,12 @@ class Config:
     # Timeout configuration
     DEFAULT_TIMEOUT: float = float(os.getenv("DEFAULT_TIMEOUT", "300.0"))
     TOOL_CALL_TIMEOUT: float = float(os.getenv("TOOL_CALL_TIMEOUT", "60.0"))
+    # Transient tool errors get more than one chance, matching upstream
+    # MCP-Atlas's April 2026 change. The timeout escalates per attempt
+    # (60s, then 120s, then 180s at the default), because a tool that is
+    # merely slow needs more time rather than another equally short window.
+    # Set to 1 to disable retries and restore the pre-2026 behaviour.
+    TOOL_CALL_ATTEMPTS: int = int(os.getenv("TOOL_CALL_ATTEMPTS", "3"))
     LIST_TOOLS_TIMEOUT: float = float(os.getenv("LIST_TOOLS_TIMEOUT", "180.0"))
 
     # Logging configuration

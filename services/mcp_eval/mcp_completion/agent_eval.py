@@ -74,6 +74,11 @@ async def run_mcp_eval(
 
     all_messages: List[Message] = list(messages)
 
+    # Token accounting across the whole run. Emitted once at the end as a
+    # separate output type; every existing consumer filters on type ==
+    # "message", so this is additive and changes nothing for them.
+    run_usage: Dict[str, Any] = {"cycles": 0, "reported_cycles": 0}
+
     for i in range(max_turns):
         assistant_message = None
         original_content = None
@@ -89,6 +94,13 @@ async def run_mcp_eval(
 
             assistant_message = result.message
             original_content = result.original_content
+
+            run_usage["cycles"] += 1
+            if result.usage:
+                run_usage["reported_cycles"] += 1
+                for key, value in result.usage.items():
+                    if isinstance(value, int):
+                        run_usage[key] = run_usage.get(key, 0) + value
 
         except Exception as error:
             logger.error(f"Model create completion or parsing failed: {error}")
@@ -134,6 +146,13 @@ async def run_mcp_eval(
         else:
             # No more tool calls, agent is done
             break
+
+    # Transient timeouts the client absorbed. A run rescued by retries still
+    # ran in a flaky environment, so the count travels with the result.
+    run_usage["transient_tool_retries"] = getattr(
+        mcp_client, "transient_retries", 0
+    )
+    yield AgentOutput("usage", run_usage)
 
 
 async def handle_run_mcp_eval(

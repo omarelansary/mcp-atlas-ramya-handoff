@@ -23,6 +23,9 @@ class LLMResponse(BaseModel):
 
     message: AssistantMessage
     original_content: Optional[str] = None
+    # Token accounting, carried so a caller can measure what a run actually
+    # cost rather than projecting it. Optional: not every provider returns it.
+    usage: Optional[Dict[str, Any]] = None
 
 
 def configure_litellm():
@@ -121,7 +124,28 @@ async def create_completion(
             original_message=response.choices[0].message,
         )
 
-        return LLMResponse(message=assistant_message)
+        # Reasoning and cached-prefix counts are the two quantities a cost
+        # projection cannot guess, so pull them out where the provider reports
+        # them. Absent fields stay absent rather than defaulting to zero, which
+        # would read as "measured and none" instead of "not reported".
+        usage = None
+        raw_usage = getattr(response, "usage", None)
+        if raw_usage is not None:
+            usage = {
+                "prompt_tokens": getattr(raw_usage, "prompt_tokens", None),
+                "completion_tokens": getattr(raw_usage, "completion_tokens", None),
+                "total_tokens": getattr(raw_usage, "total_tokens", None),
+            }
+            details = getattr(raw_usage, "completion_tokens_details", None)
+            reasoning = getattr(details, "reasoning_tokens", None)
+            if reasoning is not None:
+                usage["reasoning_tokens"] = reasoning
+            details = getattr(raw_usage, "prompt_tokens_details", None)
+            cached = getattr(details, "cached_tokens", None)
+            if cached is not None:
+                usage["cached_prompt_tokens"] = cached
+
+        return LLMResponse(message=assistant_message, usage=usage)
 
     except Exception as error:
         logger.error(f"LiteLLM completion failed: {error}")

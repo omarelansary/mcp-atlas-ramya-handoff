@@ -89,6 +89,97 @@ def get_litellm_config():
     return api_key, api_base
 
 
+# Providers reached at their own endpoint. EVAL_LLM_BASE_URL exists to point at
+# an OpenAI-compatible gateway, so applying it to one of these silently
+# misroutes the judge -- a gemini/* model sent to a gateway returns
+# "VertexAIException - Not Found" rather than anything recognisable.
+NATIVE_ROUTE_PREFIXES = ("gemini/", "vertex_ai/", "anthropic/")
+
+
+def resolve_api_base(model: str, api_base: str) -> Optional[str]:
+    """Drop a gateway base URL for providers that are reached natively."""
+    if not api_base:
+        return None
+    if model.startswith(NATIVE_ROUTE_PREFIXES):
+        logging.getLogger(__name__).warning(
+            "Ignoring EVAL_LLM_BASE_URL=%s for %s: that provider is reached at "
+            "its own endpoint, not through an OpenAI-compatible gateway.",
+            api_base,
+            model,
+        )
+        return None
+    return api_base
+
+
+def json_mode_prompt_suffix(response_schema: Dict) -> str:
+    """Deliver the output schema in the prompt, for providers that cannot take it.
+
+    Gemini receives the schema through ``response_format.response_schema`` and
+    the prompt never mentions the output shape. Plain OpenAI JSON mode has no
+    such field, and additionally *requires* the literal word "json" in the
+    messages -- without it the call is rejected and, in this pipeline, the claim
+    silently scores zero as though the model had answered wrongly.
+
+    So the same schema travels in the prompt instead. This is a change of
+    channel, not of content: no evaluation guidance is added, only the output
+    contract the other provider gets through the API.
+    """
+    return (
+        "\n\nOUTPUT FORMAT:\n"
+        "Reply with a single json object and nothing else. It must validate "
+        "against this json schema:\n"
+        f"{json.dumps(response_schema, indent=2)}"
+    )
+
+
+def structured_output_params(model: str, response_schema: Dict, temperature: float):
+    """Per-provider structured-output shape and temperature.
+
+    ``response_format.response_schema`` is Gemini's native structured-output
+    field. The real OpenAI API rejects it outright (``Unknown parameter``), so
+    an OpenAI-routed judge gets plain JSON mode plus the schema in the prompt.
+    OpenAI-*compatible* gateways tolerate the extra field, and existing results
+    were scored with it present, so their behaviour is left exactly as it was.
+
+    Returns ``(response_format, temperature, prompt_suffix)`` -- the suffix is
+    empty for providers that take the schema through the API.
+    """
+    bare = model.split("/", 1)[-1]
+    # "Real OpenAI" is an openai/ model going to OpenAI itself -- either with no
+    # base URL, or with OpenAI's own. A custom base is NOT by itself evidence of
+    # a gateway: EVAL_LLM_BASE_URL is routinely set to
+    # https://api.openai.com/v1, and treating that as a gateway kept Gemini's
+    # response_schema in the payload, which OpenAI rejects outright.
+    base = resolve_api_base(model, os.getenv("EVAL_LLM_BASE_URL", "")) or ""
+    is_openai_native = model.startswith("openai/") and (
+        not base or "api.openai.com" in base
+    )
+
+    is_gemini = model.startswith(("gemini/", "vertex_ai/"))
+
+    if is_openai_native:
+        response_format = {"type": "json_object"}
+    else:
+        # Kept for Gemini, which enforces it, and kept on the gateway path so
+        # previously scored results stay reproducible byte for byte.
+        response_format = {"type": "json_object", "response_schema": response_schema}
+
+    # Only Gemini actually enforces the schema. An OpenAI-compatible gateway
+    # accepts response_schema and ignores it, so every ScaDS model was free to
+    # invent its own vocabulary -- measured 2026-08-17: "Supported",
+    # "Fully Covered", "covers", "fully_supported", "NOT_COVERED". Naming the
+    # contract in the prompt fixes it: Llama-3.3-70B returned a null outcome
+    # without this suffix and the correct value with it.
+    prompt_suffix = "" if is_gemini else json_mode_prompt_suffix(response_schema)
+
+    # The gpt-5 family rejects temperature=0.0 and accepts only 1. Match the
+    # whole family, not the bare string "gpt-5" -- gpt-5.4 is also a gpt-5 model.
+    if bare.startswith("gpt-5"):
+        temperature = 1
+
+    return response_format, temperature, prompt_suffix
+
+
 # =========================================================================
 # 2. CORE EVALUATION FRAMEWORK (SCORING) - GEMINI VERSION
 # =========================================================================
@@ -360,23 +451,21 @@ class AsyncLiteLLMClient(AsyncLLMClient):
             try:
                 self.request_count += 1
 
-                # LiteLLM uses OpenAI-compatible format
-                # Pass response_schema for structured output (Gemini supports this natively)
+                # LiteLLM uses OpenAI-compatible format. The structured-output
+                # shape and the temperature are provider-dependent -- see
+                # structured_output_params.
+                response_format, temperature, prompt_suffix = structured_output_params(
+                    self.config.evaluator_model, response_schema, temperature
+                )
                 response = await litellm.acompletion(
                     model=self.config.evaluator_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={
-                        "type": "json_object",
-                        "response_schema": response_schema,
-                    },
-                    temperature=(
-                        1 if self.config.evaluator_model == "gpt-5" else temperature
-                    ),  # gpt-5 only supports temperature=1
+                    messages=[{"role": "user", "content": prompt + prompt_suffix}],
+                    response_format=response_format,
+                    temperature=temperature,
                     api_key=litellm.api_key,
-                    api_base=(
-                        litellm.api_base
-                        if hasattr(litellm, "api_base") and litellm.api_base
-                        else None
+                    api_base=resolve_api_base(
+                        self.config.evaluator_model,
+                        getattr(litellm, "api_base", "") or "",
                     ),
                 )
 
@@ -484,6 +573,36 @@ Be rigorous but fair in your assessment. Focus on whether the response conveys t
             "partially_fulfilled": 0.5,
             "not_fulfilled": 0.0,
         }
+        # Gemini enforces the enum through response_schema; an OpenAI-compatible
+        # gateway does not, so a judge there can return a synonym and be scored
+        # 0.0 by the ``.get(outcome, 0.0)`` default below -- silently, and
+        # regardless of what it actually decided. Observed on ScaDS: Kimi-K3
+        # returns "unable_to_determine", GLM-5.2 returns "unfulfilled".
+        # Synonyms are normalised; anything still unrecognised is COUNTED so a
+        # judge that cannot follow the contract is visible rather than merely
+        # producing low scores.
+        outcome_synonyms = {
+            "unfulfilled": "not_fulfilled",
+            "not fulfilled": "not_fulfilled",
+            "notfulfilled": "not_fulfilled",
+            "fully_fulfilled": "fulfilled",
+            "fully fulfilled": "fulfilled",
+            "partially fulfilled": "partially_fulfilled",
+            "partial": "partially_fulfilled",
+            "partially": "partially_fulfilled",
+            "partly_fulfilled": "partially_fulfilled",
+        }
+
+        def normalise_outcome(raw):
+            """Canonical outcome, or None when the judge went off-contract."""
+            if not isinstance(raw, str):
+                return None
+            key = raw.strip().lower().replace("-", "_")
+            if key in coverage_to_score:
+                return key
+            return outcome_synonyms.get(key) or outcome_synonyms.get(
+                key.replace("_", " ")
+            )
 
         # Evaluate each claim individually
         tasks = [self.evaluate_single_claim(claim, response) for claim in claims]
@@ -496,9 +615,17 @@ Be rigorous but fair in your assessment. Focus on whether the response conveys t
         partially_fulfilled_count = 0
         total_confidence = 0
 
+        off_contract_outcomes = []
         for result in claim_results:
-            coverage_outcome = result.get("coverage_outcome", "not_fulfilled")
-            score = coverage_to_score.get(coverage_outcome, 0.0)
+            raw_outcome = result.get("coverage_outcome", "not_fulfilled")
+            coverage_outcome = normalise_outcome(raw_outcome)
+            if coverage_outcome is None:
+                # Scored 0.0 as before, but no longer silently: an off-contract
+                # judge must be visible in the output, because "many zeros" and
+                # "a judge that cannot follow the schema" look identical here.
+                off_contract_outcomes.append(str(raw_outcome))
+                coverage_outcome = "not_fulfilled"
+            score = coverage_to_score[coverage_outcome]
             total_score += score
             total_confidence += result.get("confidence_level", 0.5)
 
@@ -523,6 +650,15 @@ Be rigorous but fair in your assessment. Focus on whether the response conveys t
         coverage_score = round(total_score / len(claims), 3) if claims else 0.0
         avg_confidence = total_confidence / len(claims) if claims else 0.5
 
+        if off_contract_outcomes:
+            self.logger.warning(
+                "Judge returned %d off-contract coverage_outcome value(s) on this "
+                "row, each scored 0.0: %s. A judge that cannot follow the schema "
+                "produces low scores that look like genuine failures.",
+                len(off_contract_outcomes),
+                sorted(set(off_contract_outcomes)),
+            )
+
         return {
             "per_claim": per_claim,
             "coverage_score": coverage_score,
@@ -531,6 +667,8 @@ Be rigorous but fair in your assessment. Focus on whether the response conveys t
             "partially_covered_claims": partially_fulfilled_count,
             "explanation": "Evaluation complete",
             "confidence": avg_confidence,
+            # Non-zero means this row's score is not trustworthy for this judge.
+            "off_contract_outcomes": len(off_contract_outcomes),
         }
 
     def _create_fallback_result(

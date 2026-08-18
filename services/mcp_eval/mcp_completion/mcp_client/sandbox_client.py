@@ -27,6 +27,10 @@ class SandboxMCPClient(MCPClient):
         self.enabled_tools = enabled_tools
         self.tool_call_timeout = config.TOOL_CALL_TIMEOUT
         self.list_tools_timeout = config.LIST_TOOLS_TIMEOUT
+        # How many transient timeouts were absorbed. Reported rather than
+        # hidden: retries that rescue a run are still evidence the environment
+        # was flaky, and a run needing many of them is not a clean one.
+        self.transient_retries = 0
 
     async def list_tools(self) -> List[ToolDefinition]:
         """List available tools from the sandbox."""
@@ -60,43 +64,71 @@ class SandboxMCPClient(MCPClient):
         return tools_data
 
     async def call_tool(self, tool_name: str, args: Any) -> CallToolResponse:
-        """Call a tool in the sandbox."""
-        try:
-            body = {
-                "tool_name": tool_name,
-                "tool_args": args,
-            }
+        """Call a tool in the sandbox, retrying transient timeouts.
 
-            async with httpx.AsyncClient(timeout=self.tool_call_timeout) as client:
-                response = await client.post(
-                    f"{self.sandbox_url}/call-tool",
-                    json=body,
-                    headers={"Content-Type": "application/json"},
-                )
+        A timeout is not evidence about the model or the tool selection policy
+        -- it means a remote service was slow for a moment -- yet without a
+        retry it aborts the whole task and scores as a failure. Upstream
+        MCP-Atlas added retry handling for transient tool errors in April 2026;
+        this fork predates that, and a 5-row probe on 2026-08-17 lost a row to a
+        60s `wikipedia_get_summary` timeout.
 
-                if response.status_code != 200:
-                    error_text = response.text
-                    return CallToolResponse(
-                        content=[TextContent(type="text", text=error_text)],
-                        is_error=True,
+        The timeout escalates per attempt rather than repeating the same short
+        window, since the failure mode being retried is slowness.
+
+        Deliberately NOT retried: a non-200 response, which is returned to the
+        model as an error result so it can react, and any other exception, which
+        is not known to be transient.
+        """
+        attempts = max(1, config.TOOL_CALL_ATTEMPTS)
+        body = {"tool_name": tool_name, "tool_args": args}
+        last_timeout = self.tool_call_timeout
+
+        for attempt in range(1, attempts + 1):
+            last_timeout = self.tool_call_timeout * attempt
+            try:
+                async with httpx.AsyncClient(timeout=last_timeout) as client:
+                    response = await client.post(
+                        f"{self.sandbox_url}/call-tool",
+                        json=body,
+                        headers={"Content-Type": "application/json"},
                     )
 
-                response_data = response.json()
-                return CallToolResponse(
-                    content=response_data,
-                    is_error=False,
-                )
+                    if response.status_code != 200:
+                        error_text = response.text
+                        return CallToolResponse(
+                            content=[TextContent(type="text", text=error_text)],
+                            is_error=True,
+                        )
 
-        except httpx.ReadTimeout:
-            logger.error(f"Tool {tool_name} timed out after {self.tool_call_timeout}s")
-            raise MCPClientToolTimeoutError(
-                f"Tool {tool_name} timed out after {self.tool_call_timeout}s"
-            )
-        except Exception as error:
-            logger.error(f"Failed to call tool {tool_name} in sandbox: {error}")
-            raise MCPClientToolExecutionError(
-                f"Failed to call tool {tool_name}: {error}"
-            )
+                    response_data = response.json()
+                    return CallToolResponse(
+                        content=response_data,
+                        is_error=False,
+                    )
+
+            except httpx.TimeoutException:
+                self.transient_retries += 1
+                if attempt < attempts:
+                    logger.warning(
+                        f"Tool {tool_name} timed out after {last_timeout}s "
+                        f"(attempt {attempt}/{attempts}); retrying with "
+                        f"{self.tool_call_timeout * (attempt + 1)}s"
+                    )
+                    continue
+                logger.error(
+                    f"Tool {tool_name} timed out after {last_timeout}s on the "
+                    f"final attempt ({attempts}/{attempts})"
+                )
+                raise MCPClientToolTimeoutError(
+                    f"Tool {tool_name} timed out after {last_timeout}s "
+                    f"across {attempts} attempts"
+                )
+            except Exception as error:
+                logger.error(f"Failed to call tool {tool_name} in sandbox: {error}")
+                raise MCPClientToolExecutionError(
+                    f"Failed to call tool {tool_name}: {error}"
+                )
 
     @property
     def sandbox_info(self) -> Dict[str, Any]:

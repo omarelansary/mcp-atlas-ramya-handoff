@@ -5,7 +5,7 @@ the local counterpart of `thesis-main/CURRENT_TASK.md` and
 `thesis-main/THESIS_STATE.md`; it exists so the adapter's delivery position is
 readable without reconstructing it from Git history.
 
-**State date:** 2026-08-12
+**State date:** 2026-08-17
 **Branch:** `main`
 **Pin at this state:** `6039753` (2026-08-09, merge of
 `p1-025-mcp-atlas-runtime-recovery`), working tree clean.
@@ -76,6 +76,104 @@ infrastructure. The dynamic route already re-selects per completion cycle, and
 the P1-017 `called-tool-retention` selector is already session-stateful.
 Nothing should be built here in anticipation of that decision; wait for the
 recorded decision first, then register a scoped adapter task.
+
+## 2026-08-17 — five harness changes made for P1-025-V1, all uncommitted
+
+V1 (MCP-Atlas harness validation) executed against this adapter, driving each
+row's own `ENABLED_TOOLS` through `/v2/mcp_eval/run_agent`. It passed at
+`0.5730` against a `0.685` reference. Five changes to this repository were
+required, four of them defect fixes. **All are currently uncommitted.**
+
+### 1. Transient tool timeouts are retried — `mcp_client/sandbox_client.py`
+
+Three attempts with an escalating wait, `60s → 120s → 180s`, configurable via
+`TOOL_CALL_ATTEMPTS` (set `1` to restore the previous behaviour). Only
+timeouts retry; a non-200 tool response is still returned to the model as an
+error result, and other exceptions still fail immediately.
+
+Placed in the client rather than the agent loop deliberately: the `MCPClient`
+interface is unchanged, every test fake still satisfies it, and **the dynamic
+route inherits the same protection**, which matters because P1-026 scores
+failure as a policy outcome.
+
+Measured effect: the V1 probe lost 1 row of 5 to a 60s `wikipedia_get_summary`
+timeout; the full 89-row run had **zero** infrastructure failures.
+
+Disclosed limit: upstream states it added transient-error retry but publishes
+neither attempt count nor backoff, so these values are ours. This narrows the
+gap to upstream; it does not close it.
+
+### 2. Token accounting is surfaced — `llm.py`, `agent_eval.py`
+
+`LLMResponse` now carries `usage`, including `reasoning_tokens` and
+`cached_prompt_tokens` where the provider reports them. `run_mcp_eval`
+accumulates it and emits one `AgentOutput("usage", …)` at the end of the run,
+carrying `transient_tool_retries` alongside.
+
+Additive by design: every existing consumer filters on `type == "message"`, so
+nothing else changes. This is what let V1 report measured rather than projected
+cost.
+
+### 3. Silent-scoring defect fixed — `mcp_completion_script.py`
+
+The model-response extraction had its role checks at the **outer** indent
+level, so a stream whose last entry was not a `"message"` read `msg` before it
+was bound. The `UnboundLocalError` was swallowed by a bare
+`except Exception: pass`, leaving `script_model_response` as `None`: the row
+scored as a failure with no sign anything had gone wrong.
+
+Verified **dormant** before the fix — the newly added `"usage"` output is the
+only non-`message` type in the codebase, so **no existing result is affected** —
+but it would have fired on every V1 row.
+
+### 4. Judge routing fixed for non-Gemini providers — `mcp_evals_scores.py`
+
+Three defects, all of which produced *believable wrong numbers* rather than
+errors, because the evaluator scores a failed judge call as `0`:
+
+- `EVAL_LLM_BASE_URL` was applied to every model, sending `gemini/*` traffic to
+  an OpenAI-compatible gateway. `resolve_api_base` now drops a gateway URL for
+  natively-routed providers.
+- Gemini's `response_format.response_schema` was sent to every provider; real
+  OpenAI rejects it. Now branched per provider, with the schema delivered in
+  the **prompt** for OpenAI, which also satisfies its requirement that the
+  messages contain the literal word "json".
+- The `gpt-5` temperature special case matched only the literal string
+  `"gpt-5"`, so `gpt-5.4` would have been sent an unsupported `temperature=0.0`.
+
+Measured on identical rows: schema rejected → coverage `0.000`; schema fixed
+but no "json" in prompt → `0.500`; both fixed → `0.917`.
+
+**The ScaDS OpenAI-compatible path is deliberately byte-identical to before**,
+so Phase 2b and all existing scored numbers remain comparable.
+
+### 5. Off-contract judge outcomes are normalised and counted — `mcp_evals_scores.py`
+
+Gemini enforces the `coverage_outcome` enum through `response_schema`; an
+OpenAI-compatible gateway does not. Observed on ScaDS: Kimi-K3 returns
+`unable_to_determine`, GLM-5.2 returns `unfulfilled`. The previous
+`.get(outcome, 0.0)` default scored every such claim `0` silently, so a judge
+that merely words things differently was indistinguishable from a model that
+failed.
+
+Synonyms are now normalised, and anything still unrecognised is **counted and
+logged** rather than quietly zeroed.
+
+**Open follow-up:** the correct fix is to make the provider *enforce* the
+schema rather than to clean up afterwards — ScaDS ignores Gemini's
+`response_schema` but may honour OpenAI's `json_schema` strict mode or vLLM's
+`guided_json`. Untested at the time of writing; the normaliser is a backstop,
+not the answer.
+
+### Secret hygiene
+
+`.gitignore` had `.env` only, which does not match `.env.bak-*`; a credential
+backup was therefore trackable. Now `.env.*` with `.env.example` and
+`.env.template` excepted.
+
+### Test status
+
+`61 passed, 7 subtests` after every change above.
 
 ## Update rule
 

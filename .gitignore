@@ -15,6 +15,11 @@ wheels/
 .DS_Store
 
 .env
+# Backups and per-environment variants carry the same credentials as .env, and
+# the bare ".env" rule above does not match them.
+.env.*
+!.env.example
+!.env.template
 
 # Eval results (keep folders, ignore contents)
 services/mcp_eval/completion_results/*

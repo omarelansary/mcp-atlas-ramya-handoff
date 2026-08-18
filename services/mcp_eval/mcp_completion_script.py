@@ -359,9 +359,20 @@ class AsyncMCPTrajectoryGenerator:
                     conversation = json.loads(trajectory_response)
 
                     # Handle AgentOutput format: array of {type: 'message'|'error', data: ...} objects
+                    #
+                    # The role checks below MUST stay nested inside the type
+                    # check. They previously sat at the outer indent level, so a
+                    # stream whose last entry was not a "message" -- an "error",
+                    # or the "usage" summary -- read `msg` before it was ever
+                    # bound. The resulting NameError was swallowed by the bare
+                    # `except Exception: pass` below, leaving
+                    # script_model_response as None: the model's answer was
+                    # never extracted and the row scored as a failure with no
+                    # sign that anything had gone wrong.
                     for item in reversed(conversation):
-                        if item.get("type") == "message":
-                            msg = item.get("data", {})
+                        if item.get("type") != "message":
+                            continue
+                        msg = item.get("data", {})
                         if msg.get("role") == "assistant" and msg.get("content"):
                             result.script_model_response = msg["content"]
                             break
