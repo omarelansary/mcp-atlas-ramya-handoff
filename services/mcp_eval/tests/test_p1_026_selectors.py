@@ -6,6 +6,7 @@ fake-provider tests the adapter's AGENTS.md requires before any live call.
 
 from __future__ import annotations
 
+import unittest
 from types import SimpleNamespace
 
 import pytest
@@ -196,3 +197,64 @@ def test_raw_tool_without_a_name_is_rejected() -> None:
         selector.select(
             raw_tools=[{"description": "no name"}], visible_messages=[user()], cycle_index=0
         )
+
+
+class RealToolCallShapeTests(unittest.TestCase):
+    """Extract tool-call names from the PRODUCTION type, not a stand-in.
+
+    The pre-existing test builds its own ``_Fn`` with a ``.name`` attribute and
+    its docstring claims that "the adapter reads messages purely through getattr,
+    so this exercises the same path". It does not. ``ToolCall.function`` is a
+    ``Dict[str, str]``, and ``getattr`` on a dict returns None rather than
+    reading the key.
+
+    That gap disabled the registry for an entire 1,065-run grid: prior tool-call
+    names were always empty, so nothing was ever retained and the registry arm
+    silently ran the stateless_repeat algorithm. These tests use the real schema
+    type so the same substitution cannot pass again.
+    """
+
+    def test_names_are_extracted_from_a_real_ToolCall(self):
+        from mcp_completion.schema import ToolCall
+        from mcp_completion.p1_026_selectors import _visible_messages
+
+        class _Msg:
+            role = "assistant"
+            content = None
+            tool_calls = [ToolCall(id="c1", type="function",
+                                   function={"name": "fetch_fetch", "arguments": "{}"})]
+
+        visible = _visible_messages([_Msg()])
+        self.assertEqual(visible[0].tool_call_names, ("fetch_fetch",),
+                         "a dict-shaped function must yield its name")
+
+    def test_attribute_shaped_function_still_works(self):
+        """Provider objects are not guaranteed dict-shaped across versions."""
+        from mcp_completion.p1_026_selectors import _visible_messages
+
+        class _Fn:
+            name = "files_read"
+
+        class _Call:
+            function = _Fn()
+
+        class _Msg:
+            role = "assistant"
+            content = None
+            tool_calls = [_Call()]
+
+        self.assertEqual(_visible_messages([_Msg()])[0].tool_call_names,
+                         ("files_read",))
+
+    def test_missing_or_blank_names_are_dropped(self):
+        from mcp_completion.schema import ToolCall
+        from mcp_completion.p1_026_selectors import _visible_messages
+
+        class _Msg:
+            role = "assistant"
+            content = None
+            tool_calls = [ToolCall(id="c1", type="function", function={"arguments": "{}"}),
+                          ToolCall(id="c2", type="function", function={"name": ""}),
+                          ToolCall(id="c3", type="function", function={"name": "ok_tool"})]
+
+        self.assertEqual(_visible_messages([_Msg()])[0].tool_call_names, ("ok_tool",))

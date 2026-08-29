@@ -73,7 +73,25 @@ def _visible_messages(messages: Sequence[Message]) -> tuple[VisibleMessage, ...]
         names: list[str] = []
         for call in getattr(message, "tool_calls", None) or []:
             function = getattr(call, "function", None)
-            name = getattr(function, "name", None) if function else None
+            # ``ToolCall.function`` is a ``Dict[str, str]`` (schema.py), and
+            # ``getattr`` on a dict returns None -- it does not read keys. The
+            # previous version used getattr alone, so this list was empty for
+            # every message of every run.
+            #
+            # **That silently disabled the registry.** ``retained`` derives from
+            # these names, so it was always empty and the registry branch reduced
+            # to ``selected = ranked[:budget]`` -- byte-identical to
+            # stateless_repeat. The 2026-08-27 grid recorded 0 non-empty
+            # ``retained_tool_names`` across all 1,355 registry_b8 cycles, and
+            # H1 unknowingly compared two instances of the same algorithm.
+            #
+            # Both shapes are handled because the host builds messages from
+            # provider objects whose attribute/dict form is not guaranteed
+            # across LiteLLM versions.
+            if isinstance(function, dict):
+                name = function.get("name")
+            else:
+                name = getattr(function, "name", None) if function else None
             if isinstance(name, str) and name:
                 names.append(name)
         content = getattr(message, "content", None)
