@@ -48,6 +48,108 @@ def _dynamic_failure_code(error: Exception) -> str:
     return "dynamic_host_error"
 
 
+# Modules whose exceptions identify the stage a failure occurred in. The mapping
+# is by module rather than by class because the provider SDKs raise a wide and
+# changing set of classes, but always from a stable package.
+_STAGE_BY_MODULE_PREFIX = (
+    ("openai", "completion"),
+    ("litellm", "completion"),
+    ("httpx", "completion"),
+    ("httpcore", "completion"),
+    ("anthropic", "completion"),
+    ("sentence_transformers", "selection"),
+    ("transformers", "selection"),
+    ("torch", "selection"),
+)
+
+_MESSAGE_LIMIT = 500
+
+
+def _dynamic_failure_stage(error: Exception) -> str:
+    """Best-effort stage attribution: selection | exposure | completion | tools.
+
+    **Inferred, not instrumented.** The route does not currently mark which
+    phase it is in, so this reads the exception's originating module. That is
+    reliable for the provider SDKs -- which is the case that matters, because
+    every unattributed failure so far has been a provider call -- and returns
+    ``unknown`` rather than guessing when it is not.
+
+    A true stage marker would require the dynamic route to record its phase as
+    it advances. That is the stronger fix and is deliberately not done here.
+    """
+
+    if isinstance(error, HiddenToolRequestError):
+        return "exposure"
+    if isinstance(error, (MCPClientToolTimeoutError, MCPClientToolExecutionError)):
+        return "tools"
+    if isinstance(error, DynamicMcpEvalError):
+        return "completion"
+
+    module = type(error).__module__ or ""
+    for prefix, stage in _STAGE_BY_MODULE_PREFIX:
+        if module == prefix or module.startswith(prefix + "."):
+            return stage
+    return "unknown"
+
+
+def _dynamic_failure_detail(error: Exception) -> Dict[str, Any]:
+    """Return the failure payload: the code, plus what it takes to diagnose it.
+
+    **This exists because a bucket code alone destroyed an experiment.** 150
+    P1-026 pilot runs failed and recorded the single word ``dynamic_host_error``
+    with an empty payload. It was read as a verdict on the task model. It was
+    not -- the model had never been reached -- and the true cause is now
+    permanently unrecoverable, because nothing persisted the exception. A later
+    reproduction found the message was ``team not allowed to access model``,
+    which is itself misleading: it names a permission tier that does not exist
+    on that gateway, and the model had simply been withdrawn.
+
+    So the code is kept exactly as it was -- callers and the contract depend on
+    it -- and the diagnosis is added beside it.
+
+    **The diagnosis is added for the untyped bucket only, and this is
+    deliberate.** Every other code already names its own cause: a
+    ``hidden_tool_request`` needs no explanation. More importantly, the typed
+    errors' messages can carry **model-derived content** -- a
+    ``HiddenToolRequestError`` names the tool the model asked for, which is
+    model output. The existing tests guarantee those responses stay free of
+    error text, and that guarantee is preserved here unchanged. Only
+    ``dynamic_host_error`` -- the catch-all that destroyed attribution -- gains
+    fields.
+
+    **On the raw-material boundary.** ``message`` is a provider-originated error
+    string, not a model response, and is truncated. Provider errors do not
+    normally echo request content, but they are not guaranteed never to. The
+    containment is that raw run records are gitignored and never committed; this
+    field must not be promoted into a public record without being read first.
+    """
+
+    failure_code = _dynamic_failure_code(error)
+    if failure_code != "dynamic_host_error":
+        return {"failure_code": failure_code}
+
+    detail: Dict[str, Any] = {
+        "failure_code": failure_code,
+        "stage": _dynamic_failure_stage(error),
+        "exception_type": type(error).__name__,
+        "exception_module": type(error).__module__,
+    }
+
+    # openai/litellm carry the upstream HTTP status; most other exceptions do not.
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int):
+        detail["upstream_status"] = status
+
+    message = str(error)
+    if message:
+        detail["message"] = (
+            message
+            if len(message) <= _MESSAGE_LIMIT
+            else message[:_MESSAGE_LIMIT] + "... [truncated]"
+        )
+    return detail
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """Log requests with their actual response status codes."""
@@ -130,17 +232,17 @@ async def run_agent_dynamic(
             "usage": dynamic_result.usage,
         }
     except Exception as error:
-        failure_code = _dynamic_failure_code(error)
+        detail = _dynamic_failure_detail(error)
         logger.error(
-            "Dynamic MCP eval failed with %s: %s",
-            failure_code,
+            "Dynamic MCP eval failed with %s at stage %s (%s.%s): %s",
+            detail["failure_code"],
+            detail.get("stage", "n/a"),
+            detail.get("exception_module", type(error).__module__),
+            detail.get("exception_type", type(error).__name__),
             error,
             exc_info=True,
         )
-        raise HTTPException(
-            status_code=500,
-            detail={"failure_code": failure_code},
-        ) from error
+        raise HTTPException(status_code=500, detail=detail) from error
 
 
 def main():

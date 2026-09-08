@@ -355,5 +355,67 @@ class DynamicEndpointTests(unittest.TestCase):
         )
 
 
+class DynamicFailureDetailTests(unittest.TestCase):
+    """The untyped bucket must carry its cause; the typed ones must not.
+
+    Both halves matter. 150 pilot runs once recorded ``dynamic_host_error`` with
+    an empty payload and the cause is permanently lost -- that is the first half.
+    The second is that typed failures stay free of error text, because their
+    messages can name model-derived content: a HiddenToolRequestError names the
+    tool the model asked for.
+    """
+
+    def test_host_error_carries_stage_type_status_and_message(self):
+        from mcp_completion.main import _dynamic_failure_detail
+
+        class _ProviderError(Exception):
+            status_code = 500
+
+        _ProviderError.__module__ = "openai"
+        detail = _dynamic_failure_detail(
+            _ProviderError("team not allowed to access model")
+        )
+
+        self.assertEqual(detail["failure_code"], "dynamic_host_error")
+        self.assertEqual(detail["stage"], "completion")
+        self.assertEqual(detail["exception_type"], "_ProviderError")
+        self.assertEqual(detail["exception_module"], "openai")
+        self.assertEqual(detail["upstream_status"], 500)
+        self.assertIn("team not allowed to access model", detail["message"])
+
+    def test_host_error_truncates_a_long_message(self):
+        from mcp_completion.main import _MESSAGE_LIMIT, _dynamic_failure_detail
+
+        detail = _dynamic_failure_detail(RuntimeError("x" * (_MESSAGE_LIMIT + 50)))
+        self.assertTrue(detail["message"].endswith("... [truncated]"))
+        self.assertLess(len(detail["message"]), _MESSAGE_LIMIT + 40)
+
+    def test_unattributable_exception_says_unknown_rather_than_guessing(self):
+        from mcp_completion.main import _dynamic_failure_detail
+
+        detail = _dynamic_failure_detail(RuntimeError("something odd"))
+        self.assertEqual(detail["stage"], "unknown")
+
+    def test_typed_failures_carry_the_code_and_nothing_else(self):
+        from mcp_completion.dynamic_eval import (
+            DynamicMcpEvalError,
+            HiddenToolRequestError,
+        )
+        from mcp_completion.main import _dynamic_failure_detail
+
+        cases = [
+            (HiddenToolRequestError("model asked for files_secret_read"),
+             "hidden_tool_request"),
+            (MCPClientToolTimeoutError("tool timed out"), "mcp_tool_call_timeout"),
+            (DynamicMcpEvalError("model did not finish within max_turns"),
+             "max_turns_exhausted"),
+            (DynamicMcpEvalError("contract violated"), "dynamic_contract_error"),
+        ]
+        for error, code in cases:
+            with self.subTest(code=code):
+                detail = _dynamic_failure_detail(error)
+                self.assertEqual(detail, {"failure_code": code})
+
+
 if __name__ == "__main__":
     unittest.main()

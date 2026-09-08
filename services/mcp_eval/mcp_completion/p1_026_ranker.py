@@ -12,21 +12,54 @@ P1-026 grid makes on the order of ten thousand ranking calls. Loading model
 weights or re-embedding the 126 tool documents at that rate would dominate the
 run. Both are done once, on first use, and reused for the process lifetime.
 
-Model choices are the frozen ones from the P1-025 contract and are not
-configurable here, so a P1-026 run cannot silently rank with a different model
-than the line it extends.
+Model choices are frozen here and deliberately not configurable, so a P1-026 run
+cannot silently rank with a different model than the studies it extends. What
+they are frozen *to* changed on 2026-08-24, and the reason is recorded because
+the constants no longer match the P1-025 line's originals.
+
+**MiniLM was replaced by Qwen (2026-08-24).** The supervisor rejected MiniLM on
+2026-08-18 (traceability ``T-116``); because ``hybrid_three_way`` uses a MiniLM
+twice -- dense *and* cross-encoder -- both stages were replaced, since a partial
+swap would leave the objection standing. Every P1-026 replay study since
+(``RA`` Qwen arm, ``RA2``, ``RA3``, ``RA4``) ran on Qwen, so leaving this module
+on MiniLM meant the executable path ranked with a different instrument than the
+replay line that justifies running it at all. Note this is not a contract
+amendment: the P1-026 contract freezes no ranker and never named one.
+
+**This also changes where the models run.** MiniLM was loaded locally through
+``sentence-transformers``; the Qwen pair is served over HTTP by ScaDS, through
+``active_registry_core.scads_ranking_backends`` -- the same backend the replay
+runners already use, which closes a live divergence between the two paths rather
+than opening one.
+
+Two consequences follow and are handled below. The singleton's cost argument
+gets *stronger*, not weaker, because a ranking call is now a network round trip;
+and the rerank endpoint is **not bit-deterministic** -- ``RA4`` measured
+absolute availability drifting up to ``0.0141`` between runs -- so both caches
+are wired by default, which removes that drift rather than bounding it.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import threading
+from pathlib import Path
 from typing import Sequence
 
 logger = logging.getLogger(__name__)
 
-DENSE_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-CROSS_ENCODER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+# Frozen. See the module docstring for why these changed on 2026-08-24.
+DENSE_MODEL_NAME = "Qwen/Qwen3-Embedding-4B"
+CROSS_ENCODER_MODEL_NAME = "Qwen/Qwen3-Reranker-4B"
+
+# Caching is on by default. Without it the rerank endpoint's non-determinism
+# reappears in every P1-026 number, and a full grid repeats on the order of ten
+# thousand identical scoring calls over an unchanging 126-tool inventory.
+_CACHE_DIR = Path(
+    os.getenv("P1_026_RANKER_CACHE_DIR")
+    or Path(__file__).resolve().parents[2] / "p1_026_ranker_cache"
+)
 
 _lock = threading.Lock()
 _ranker = None
@@ -44,22 +77,45 @@ def _load_ranker():
     )
 
     try:
-        from sentence_transformers import CrossEncoder, SentenceTransformer
+        from active_registry_core.scads_ranking_backends import (
+            build_scads_cross_encoder,
+            build_scads_embedder,
+        )
     except ImportError as error:  # pragma: no cover - environment dependent
         raise P1026RankerUnavailableError(
-            "P1-026 ranking conditions need sentence-transformers installed in "
-            "this service environment; only p1_026_full runs without it"
+            "P1-026 ranking conditions need active_registry_core's ScaDS "
+            "backends; only p1_026_full runs without a ranker"
         ) from error
 
-    logger.info("Loading P1-026 ranking models (once per process)")
-    dense = SentenceTransformer(DENSE_MODEL_NAME)
-    cross = CrossEncoder(CROSS_ENCODER_MODEL_NAME)
+    from .config import config
 
-    def embed(texts: Sequence[str]):
-        return dense.encode(list(texts), convert_to_numpy=True)
+    # The key is required, and its absence is raised here rather than surfacing
+    # later as an opaque provider error. A ranking condition without a reachable
+    # endpoint cannot rank at all, so failing at load is the honest outcome.
+    api_key = getattr(config, "LLM_API_KEY", "") or ""
+    if not api_key:
+        raise P1026RankerUnavailableError(
+            "P1-026 ranking conditions need LLM_API_KEY set for the ScaDS "
+            "endpoint; only p1_026_full runs without a ranker"
+        )
 
-    def cross_encode(pairs):
-        return cross.predict(list(pairs))
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "Building P1-026 ranking backends (once per process): dense=%s cross=%s "
+        "cache=%s",
+        DENSE_MODEL_NAME, CROSS_ENCODER_MODEL_NAME, _CACHE_DIR,
+    )
+
+    embed = build_scads_embedder(
+        api_key=api_key,
+        model=DENSE_MODEL_NAME,
+        cache_path=_CACHE_DIR / "p1_026_embeddings.jsonl",
+    )
+    cross_encode = build_scads_cross_encoder(
+        api_key=api_key,
+        model=CROSS_ENCODER_MODEL_NAME,
+        cache_path=_CACHE_DIR / "p1_026_rerank.jsonl",
+    )
 
     def rank(tools, query: str) -> tuple[str, ...]:
         """Full ranking of the discovered tools for one query.
