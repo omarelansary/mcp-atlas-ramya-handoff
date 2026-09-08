@@ -45,6 +45,27 @@ class ValidClient:
         }
 
 
+class MixedOutcomeClient:
+    """Stub judge whose verdict depends on which claim the prompt carries."""
+
+    _VERDICTS = {
+        "claim-full": "fulfilled",
+        "claim-part": "partially_fulfilled",
+        "claim-none": "not_fulfilled",
+    }
+
+    async def generate_structured_content(self, prompt: str, **_kwargs):
+        for claim, outcome in self._VERDICTS.items():
+            if json.dumps(claim) in prompt:
+                return {
+                    "claim_text": claim,
+                    "coverage_outcome": outcome,
+                    "justification": f"judge verdict for {claim}",
+                    "confidence_level": 0.8,
+                }
+        raise AssertionError("stub judge received an unexpected claim")
+
+
 def _config() -> scorer.EvaluatorConfig:
     return scorer.EvaluatorConfig(
         evaluator_model="provider/model",
@@ -108,7 +129,10 @@ def _valid_scored_dataframe() -> pd.DataFrame:
         "coverage_score": 1.0,
         "total_claims": 1,
         "fully_covered_claims": 1,
-        "partially_fulfilled_claims": 0,
+        # CoverageEvaluator.evaluate emits "partially_covered_claims"; the
+        # fixture previously said "partially_fulfilled_claims", which the
+        # scorer never produces.
+        "partially_covered_claims": 0,
         "explanation": "Evaluation complete",
         "confidence": 0.9,
         "off_contract_outcomes": 0,
@@ -133,6 +157,22 @@ def _set_off_contract_outcome(frame: pd.DataFrame) -> None:
     details = json.loads(frame.loc[0, "coverage_details_json"])
     details["off_contract_outcomes"] = 1
     frame["coverage_details_json"] = [json.dumps(details)]
+
+
+def _set_detail(frame: pd.DataFrame, key: str, value) -> None:
+    details = json.loads(frame.loc[0, "coverage_details_json"])
+    details[key] = value
+    frame["coverage_details_json"] = [json.dumps(details)]
+
+
+def _duplicate_detail_key(frame: pd.DataFrame) -> None:
+    """Repeat one key in the raw detail text, which json.dumps cannot produce."""
+    text = frame.loc[0, "coverage_details_json"]
+    duplicated = text.replace(
+        '"total_claims": 1', '"total_claims": 1, "total_claims": 1', 1
+    )
+    assert duplicated != text
+    frame["coverage_details_json"] = [duplicated]
 
 
 def test_prompt_marks_claim_and_response_as_untrusted_json():
@@ -237,6 +277,49 @@ def test_p1_input_rejects_trajectory_column(tmp_path):
         ),
         (_set_failed_reason, "judge-call failure"),
         (_set_off_contract_outcome, "off-contract"),
+        # 1. exact scored-column schema: unexpected and missing columns.
+        (
+            lambda frame: frame.__setitem__("TRAJECTORY", ["must not be published"]),
+            "exact scorer contract",
+        ),
+        (
+            lambda frame: frame.drop(columns=["evaluation_confidence"], inplace=True),
+            "missing columns",
+        ),
+        # 2. fully_covered_claims.
+        (
+            lambda frame: frame.__setitem__("fully_covered_claims", [-1]),
+            "invalid fully_covered_claims",
+        ),
+        # 3. partially_covered_claims.
+        (
+            lambda frame: frame.__setitem__("partially_covered_claims", [0.5]),
+            "invalid partially_covered_claims",
+        ),
+        # 4. evaluation_confidence.
+        (
+            lambda frame: frame.__setitem__("evaluation_confidence", [1.7]),
+            "evaluation_confidence outside",
+        ),
+        (
+            lambda frame: frame.__setitem__("evaluation_confidence", [0.4]),
+            "evaluation_confidence disagrees with details",
+        ),
+        # 5. claim counts must agree with the parsed per-claim details.
+        (
+            lambda frame: frame.__setitem__("fully_covered_claims", [0]),
+            "covered-claim counts disagree with details",
+        ),
+        (
+            lambda frame: _set_detail(frame, "fully_covered_claims", 0),
+            "detail fully_covered_claims disagrees with per_claim",
+        ),
+        (
+            lambda frame: _set_detail(frame, "partially_fulfilled_claims", 0),
+            "details keys differ",
+        ),
+        # 6. duplicate keys inside coverage_details_json.
+        (_duplicate_detail_key, "duplicate key"),
     ],
 )
 def test_scored_dataframe_rejects_invalid_results(mutation, message):
@@ -245,6 +328,37 @@ def test_scored_dataframe_rejects_invalid_results(mutation, message):
 
     with pytest.raises(ValueError, match=message):
         scorer.validate_scored_dataframe(dataframe)
+
+
+def test_well_formed_scored_frame_still_passes():
+    scorer.validate_scored_dataframe(_valid_scored_dataframe())
+
+
+def test_real_evaluator_output_satisfies_the_tightened_contract():
+    """The checks are written against the emitted shape, not an assumed one.
+
+    A mixed frame exercises all three coverage outcomes, so the fully/partially
+    counts, the detail key set and the confidence agreement are all non-trivial.
+    """
+    frame = _p1_dataframe()
+    frame.loc[0, "GTFA_CLAIMS"] = json.dumps(
+        ["claim-full", "claim-part", "claim-none"]
+    )
+    evaluator = scorer.CoverageEvaluator(MixedOutcomeClient(), _config())
+
+    scored = asyncio.run(scorer.evaluate_dataframe_async(frame, evaluator))
+    scorer.validate_scored_dataframe(scored)
+
+    assert tuple(scored.columns) == (
+        scorer.P1_026_INPUT_COLUMNS + scorer.SCORER_RESULT_COLUMNS
+    )
+    details = json.loads(scored.loc[0, "coverage_details_json"])
+    assert set(details) == set(scorer.SCORER_DETAIL_KEYS)
+    assert scored.loc[0, "total_claims"] == 3
+    assert scored.loc[0, "fully_covered_claims"] == 1
+    assert scored.loc[0, "partially_covered_claims"] == 1
+    assert scored.loc[0, "coverage_score"] == 0.5
+    assert scored.loc[0, "evaluation_confidence"] == pytest.approx(0.8)
 
 
 def test_atomic_scored_write_never_overwrites(tmp_path):

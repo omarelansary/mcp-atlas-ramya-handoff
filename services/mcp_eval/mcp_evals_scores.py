@@ -88,29 +88,104 @@ P1_026_INPUT_COLUMNS = (
 P1_026_BUNDLE_SCHEMA_VERSION = "p1-026-evaluator-input-bundle-v1"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
+# The exact columns evaluate_dataframe_async appends, in the order it appends
+# them. A scored frame is its input frame plus these six and nothing else, so a
+# renamed, dropped, reordered, or input-shadowed scored column is detectable.
+SCORER_RESULT_COLUMNS = (
+    "coverage_score",
+    "fully_covered_claims",
+    "partially_covered_claims",
+    "total_claims",
+    "coverage_details_json",
+    "evaluation_confidence",
+)
+# The exact object CoverageEvaluator.evaluate returns and that
+# evaluate_dataframe_async serialises whole into coverage_details_json.
+# Verified against the emitted object, not assumed: the partial-coverage key is
+# "partially_covered_claims" here, whatever a consumer may call it.
+SCORER_DETAIL_KEYS = frozenset(
+    {
+        "per_claim",
+        "coverage_score",
+        "total_claims",
+        "fully_covered_claims",
+        "partially_covered_claims",
+        "explanation",
+        "confidence",
+        "off_contract_outcomes",
+    }
+)
+SCORER_PER_CLAIM_KEYS = frozenset({"claim", "score", "covered", "reason"})
+# CoverageEvaluator.evaluate maps every outcome through coverage_to_score, so
+# any other per-claim score means that table was bypassed.
+SCORER_CLAIM_SCORES = (0.0, 0.5, 1.0)
+
+
+class _StrictJsonError(ValueError):
+    """Standard-JSON violation: a duplicate object key or a NaN/infinity constant.
+
+    Distinguishable from an ordinary parse failure so a caller can report the
+    specific violation instead of collapsing it into "invalid JSON".
+    """
+
+
+def _strict_json_loads(value: Union[str, bytes], label: str):
+    """Parse standard JSON while rejecting duplicate keys and NaN/infinity."""
+
+    def object_from_pairs(pairs):
+        result = {}
+        for key, item in pairs:
+            if key in result:
+                raise _StrictJsonError(f"{label} contains duplicate key {key!r}")
+            result[key] = item
+        return result
+
+    def reject_constant(constant):
+        raise _StrictJsonError(f"{label} contains non-standard constant {constant!r}")
+
+    return json.loads(
+        value,
+        object_pairs_hook=object_from_pairs,
+        parse_constant=reject_constant,
+    )
+
 
 def _strict_json_load(path: Path, label: str):
     """Read standard JSON while rejecting duplicate keys and NaN/infinity."""
 
-    def object_from_pairs(pairs):
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f"{label} contains duplicate key {key!r}")
-            result[key] = value
-        return result
-
-    def reject_constant(value):
-        raise ValueError(f"{label} contains non-standard constant {value!r}")
-
     try:
-        return json.loads(
-            path.read_text(encoding="utf-8"),
-            object_pairs_hook=object_from_pairs,
-            parse_constant=reject_constant,
-        )
+        return _strict_json_loads(path.read_text(encoding="utf-8"), label)
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ValueError(f"cannot read {label}: {error}") from error
+
+
+def _exact_keys(value: Dict[str, Any], expected: frozenset, label: str) -> None:
+    """Reject an object whose key set is not exactly the contracted one."""
+
+    actual = set(value)
+    missing = sorted(expected - actual)
+    extra = sorted(actual - expected)
+    if missing or extra:
+        raise ValueError(
+            f"{label} keys differ: missing={missing or '[]'} extra={extra or '[]'}"
+        )
+
+
+def _scored_count(value: Any, message: str) -> int:
+    """Read a non-negative integral count from a scored column, or fail closed."""
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(message) from error
+    if (
+        isinstance(value, bool)
+        or not math.isfinite(number)
+        or not number.is_integer()
+        or number < 0
+    ):
+        raise ValueError(message)
+    return int(number)
 
 
 def _sha256_file(path: Path) -> str:
@@ -218,15 +293,23 @@ def validate_scored_dataframe(dataframe: pd.DataFrame) -> None:
 
     if dataframe.empty:
         raise ValueError("scorer produced zero rows")
-    required = {
-        "coverage_score",
-        "total_claims",
-        "coverage_details_json",
-        "script_model_response",
-    }
+    required = set(SCORER_RESULT_COLUMNS) | {"script_model_response"}
     missing = sorted(required - set(dataframe.columns))
     if missing:
         raise ValueError(f"scored data is missing columns: {missing}")
+    columns = list(dataframe.columns)
+    duplicated = sorted({name for name in columns if columns.count(name) > 1})
+    if duplicated:
+        raise ValueError(f"scored data has duplicate columns: {duplicated}")
+    # The scored columns are appended, so they are the tail in a fixed order.
+    # An input column of the same name is overwritten in place instead, which
+    # shows up here as a short or misordered tail rather than as clean output.
+    tail = tuple(columns[-len(SCORER_RESULT_COLUMNS) :])
+    if tail != SCORER_RESULT_COLUMNS:
+        raise ValueError(
+            "scored columns differ from the exact scorer contract "
+            f"{list(SCORER_RESULT_COLUMNS)!r}: {list(tail)!r}"
+        )
     for index, row in dataframe.iterrows():
         try:
             score = float(row["coverage_score"])
@@ -247,13 +330,41 @@ def validate_scored_dataframe(dataframe: pd.DataFrame) -> None:
         ):
             raise ValueError(f"scored row {index} has zero claims or a non-integral count")
         total_claims_int = int(total_claims_number)
-        try:
-            details = json.loads(
-                row["coverage_details_json"],
-                parse_constant=lambda value: (_ for _ in ()).throw(
-                    ValueError(f"non-standard constant {value!r}")
-                ),
+        fully_covered = _scored_count(
+            row["fully_covered_claims"],
+            f"scored row {index} has invalid fully_covered_claims",
+        )
+        partially_covered = _scored_count(
+            row["partially_covered_claims"],
+            f"scored row {index} has invalid partially_covered_claims",
+        )
+        if fully_covered + partially_covered > total_claims_int:
+            raise ValueError(
+                f"scored row {index} has more covered claims than total claims"
             )
+        confidence = row["evaluation_confidence"]
+        try:
+            confidence_number = float(confidence)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"scored row {index} has invalid evaluation_confidence"
+            ) from error
+        if (
+            isinstance(confidence, bool)
+            or not math.isfinite(confidence_number)
+            or not 0.0 <= confidence_number <= 1.0
+        ):
+            raise ValueError(
+                f"scored row {index} has evaluation_confidence outside [0,1]"
+            )
+        try:
+            details = _strict_json_loads(
+                row["coverage_details_json"], f"scored row {index} details"
+            )
+        except _StrictJsonError:
+            # A duplicate key or a NaN/infinity constant: report the specific
+            # violation rather than collapsing it into "invalid detail JSON".
+            raise
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             raise ValueError(f"scored row {index} has invalid detail JSON") from error
         if not isinstance(details, dict):
@@ -261,6 +372,7 @@ def validate_scored_dataframe(dataframe: pd.DataFrame) -> None:
         claims = details.get("per_claim")
         if not isinstance(claims, list) or not claims:
             raise ValueError(f"scored row {index} has missing/empty per_claim details")
+        _exact_keys(details, SCORER_DETAIL_KEYS, f"scored row {index} details")
         if len(claims) != total_claims_int or details.get("total_claims") != len(claims):
             raise ValueError(f"scored row {index} claim counts disagree")
         try:
@@ -271,6 +383,8 @@ def validate_scored_dataframe(dataframe: pd.DataFrame) -> None:
             raise ValueError(f"scored row {index} score disagrees with details")
         if details.get("off_contract_outcomes") != 0:
             raise ValueError(f"scored row {index} has off-contract judge outcomes")
+        detail_fully = 0
+        detail_partially = 0
         for claim in claims:
             if not isinstance(claim, dict):
                 raise ValueError(f"scored row {index} has malformed claim details")
@@ -279,6 +393,48 @@ def validate_scored_dataframe(dataframe: pd.DataFrame) -> None:
                 raise ValueError(f"scored row {index} has a claim without a reason")
             if "evaluation failed" in reason.casefold():
                 raise ValueError(f"scored row {index} contains a judge-call failure")
+            _exact_keys(claim, SCORER_PER_CLAIM_KEYS, f"scored row {index} claim")
+            claim_score = claim["score"]
+            if isinstance(claim_score, bool) or claim_score not in SCORER_CLAIM_SCORES:
+                raise ValueError(f"scored row {index} has an off-scale claim score")
+            expected_covered = (
+                True
+                if claim_score == 1.0
+                else ("partial" if claim_score == 0.5 else False)
+            )
+            if claim["covered"] != expected_covered:
+                raise ValueError(
+                    f"scored row {index} claim coverage disagrees with its score"
+                )
+            detail_fully += int(claim_score == 1.0)
+            detail_partially += int(claim_score == 0.5)
+        for name, tallied in (
+            ("fully_covered_claims", detail_fully),
+            ("partially_covered_claims", detail_partially),
+        ):
+            if type(details[name]) is not int or details[name] != tallied:
+                raise ValueError(
+                    f"scored row {index} detail {name} disagrees with per_claim"
+                )
+        if fully_covered != detail_fully or partially_covered != detail_partially:
+            raise ValueError(
+                f"scored row {index} covered-claim counts disagree with details"
+            )
+        detail_confidence = details["confidence"]
+        try:
+            detail_confidence_number = float(detail_confidence)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"scored row {index} has invalid detail confidence"
+            ) from error
+        if (
+            isinstance(detail_confidence, bool)
+            or not math.isfinite(detail_confidence_number)
+            or detail_confidence_number != confidence_number
+        ):
+            raise ValueError(
+                f"scored row {index} evaluation_confidence disagrees with details"
+            )
 
 
 def atomic_write_dataframe(dataframe: pd.DataFrame, destination: Path) -> None:
