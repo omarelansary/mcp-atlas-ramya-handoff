@@ -24,6 +24,12 @@ shell: # shell for agent-environment
 run-mcp-completion: 
 	cd services/mcp_eval && uv run python -m mcp_completion.main
 
+# Run the full mcp_eval test suite. Needs an environment with active-registry-core
+# installed (for example services/mcp_eval/.venv activated). CI runs the subset
+# that does not need it; see .github/workflows/test.yml.
+test:
+	cd services/mcp_eval && python -m pytest -p no:cacheprovider tests
+
 # Build and push multi-arch image to ghcr.io
 # Requires Docker, and may not work with Rancher Desktop
 # First do: docker login ghcr.io

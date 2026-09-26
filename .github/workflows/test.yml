@@ -1,26 +1,77 @@
 name: Tests
 
+# Until 2026-09-26 this workflow could not pass: it ran `uv sync` at the
+# repository root, which has no pyproject.toml, and then `make test`, which had
+# no recipe. Every run on main failed within seconds, so no adapter test ever
+# ran in CI.
+#
+# The mcp_eval project pins active-registry-core by git URL to a PRIVATE
+# repository, which this public repository's CI cannot fetch. So CI installs
+# every locked dependency EXCEPT that package and runs the test files that do
+# not import it. Those include the fail-closed scorer tests and the five
+# provenance tests (empty tools, finish reason, max-turns trajectory, tool
+# document shape, tool failure).
+#
+# Not run here, because they import active_registry_core:
+#   test_dynamic_endpoint.py, test_dynamic_selectors.py, test_p1_026_selectors.py
+# Run the full suite locally with `make test`.
+
 on:
   push:
-    branches: [ main ]
+    branches: ["**"]
   pull_request:
-    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   test:
+    name: mcp_eval tests (without the private thesis core)
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: services/mcp_eval
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        submodules: true
-    
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
-    
-    - name: Install dependencies
-      run: uv sync
-    
-    - name: Run tests
-      run: make test 
+      # The MCP server submodules are not needed by these tests.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Install locked dependencies, without the private core package
+        run: |
+          uv sync --frozen --no-install-project --no-install-package active-registry-core
+          uv pip install "pytest>=8,<10"
+
+      - name: Run tests
+        run: |
+          uv run --no-sync python -m pytest -p no:cacheprovider --junitxml=report.xml \
+            tests/test_mcp_evals_scores_fail_closed.py \
+            tests/test_empty_tools_omitted.py \
+            tests/test_finish_reason_recorded.py \
+            tests/test_max_turns_trajectory_preserved.py \
+            tests/test_tool_document_shape.py \
+            tests/test_tool_failure_recorded.py \
+            tests/test_dynamic_eval.py \
+            tests/test_dynamic_results.py \
+            tests/test_p1_017_development.py \
+            tests/test_p1_025_inventory.py
+
+      # A run that collects nothing, skips silently or loses a file must not
+      # read as green. The JUnit report counted 96 entries for this set when the
+      # workflow was fixed (89 tests plus 7 subtests), so dropping any file fails.
+      - name: Refuse an unproven pass
+        if: always()
+        run: |
+          uv run --no-sync python - <<'EOF'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse("report.xml").getroot()
+          suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+          n = {k: sum(int(s.get(k, 0)) for s in suites) for k in ("tests", "failures", "errors", "skipped")}
+          print(n)
+          if n["tests"] < 96 or n["failures"] or n["errors"] or n["skipped"]:
+              sys.exit(f"unproven pass: {n} (expected >= 96 JUnit entries, no failures, errors or skips)")
+          EOF
