@@ -316,9 +316,26 @@ class DynamicEndpointTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 500)
-        self.assertEqual(
-            response.json(), {"detail": {"failure_code": "max_turns_exhausted"}}
-        )
+        detail = response.json()["detail"]
+        # The guarantee this test exists for: a TYPED failure leaks no error
+        # TEXT. Typed messages can carry model-derived content (a
+        # HiddenToolRequestError names the tool the model asked for), so no
+        # exception string may reach the body.
+        self.assertEqual(detail["failure_code"], "max_turns_exhausted")
+        for forbidden in ("message", "exception_type", "exception_module"):
+            self.assertNotIn(forbidden, detail)
+
+        # Added with P1029-D1. The assertion above used to be exact-dict
+        # equality, which was STRICTER than the guarantee it documents: it also
+        # forbade structured data that is not error text. The turn-cap path now
+        # returns the partial trajectory -- the same message stream a
+        # SUCCESSFUL run already returns, not an exception string -- so the
+        # no-error-text guarantee is unchanged and is now asserted directly
+        # rather than implied by exact equality.
+        partial = detail["partial_trajectory"]
+        self.assertEqual(partial["truncated_by"], "max_turns")
+        self.assertTrue(partial["outputs"], "trajectory lost on turn cap")
+        self.assertFalse(partial["dynamic_trace"]["model_final_text_present"])
 
     def test_dynamic_endpoint_codes_mcp_tool_timeout_without_error_text(self):
         completion = _SequenceCompletion(

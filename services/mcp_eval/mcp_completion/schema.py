@@ -150,6 +150,14 @@ class RunDynamicAgentAPIRequestBody(BaseModel):
     tool_budget: Optional[int] = Field(None, alias="toolBudget", ge=1)
     max_turns: int = Field(20, alias="maxTurns")
     extra_body: Optional[Dict[str, Any]] = Field(None, alias="extraBody")
+    # How much of the source's own metadata reaches the model. "raw" is what
+    # every run before 2026-09-15 sent and stays the default, so omitting this
+    # field reproduces prior behaviour exactly. "with_output" additionally
+    # copies the server's published outputSchema into the description -- 42 of
+    # the 126 MCP-Atlas tools publish one and this route discarded all of them.
+    tool_document_shape: Literal["raw", "with_output"] = Field(
+        "raw", alias="toolDocumentShape"
+    )
 
     @model_validator(mode="after")
     def validate_dynamic_selection_mode(self):

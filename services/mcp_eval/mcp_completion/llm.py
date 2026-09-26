@@ -26,6 +26,16 @@ class LLMResponse(BaseModel):
     # Token accounting, carried so a caller can measure what a run actually
     # cost rather than projecting it. Optional: not every provider returns it.
     usage: Optional[Dict[str, Any]] = None
+    # Why this sits on the RESPONSE and not on AssistantMessage: litellm's
+    # `Message` has no `finish_reason` -- it lives on `choices[0]` -- and adding
+    # a field to AssistantMessage would put it in `model_dump()`, which is also
+    # what reaches the provider in `visible_messages`. That would change what the
+    # MODEL sees. Carried here instead, and recorded as a sibling of `data`.
+    #
+    # Without it, a turn cut off at the token limit is indistinguishable from one
+    # that finished. Under high reasoning effort with no `max_tokens`, a
+    # truncated answer scores lower on claim coverage and nothing says why.
+    finish_reason: Optional[str] = None
 
 
 def configure_litellm():
@@ -90,13 +100,22 @@ async def create_completion(
         proxy_model = model
 
     try:
+        # An EMPTY tools list must be omitted, not sent. Verified against the
+        # ScaDS gateway on 2026-09-16: `"tools": []` returns
+        # HTTP 400 "`tools` must not be an empty array", with or without
+        # tool_choice, while omitting the field entirely returns 200.
+        #
+        # This matters because a no-tools condition -- exposing zero tools to
+        # measure what the model solves from parametric knowledge alone -- is a
+        # legitimate active set, not a degenerate one. Sending [] would fail
+        # every such run identically and look like a model or endpoint fault.
         response = await litellm.acompletion(
             model=proxy_model,
             messages=litellm_messages,
-            tools=litellm_tools,
             api_key=config.LLM_API_KEY,
             api_base=config.LLM_BASE_URL,
             timeout=config.DEFAULT_TIMEOUT,
+            **({"tools": litellm_tools} if litellm_tools else {}),
             **({"extra_body": extra_body} if extra_body else {}),
         )
 
@@ -145,7 +164,11 @@ async def create_completion(
             if cached is not None:
                 usage["cached_prompt_tokens"] = cached
 
-        return LLMResponse(message=assistant_message, usage=usage)
+        return LLMResponse(
+            message=assistant_message,
+            usage=usage,
+            finish_reason=getattr(response.choices[0], "finish_reason", None),
+        )
 
     except Exception as error:
         logger.error(f"LiteLLM completion failed: {error}")

@@ -6,6 +6,8 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+from dataclasses import asdict
+
 import uvicorn
 from fastapi import FastAPI, HTTPException, Header, Request, Response
 
@@ -14,7 +16,11 @@ from .agent_eval import (
     handle_run_mcp_eval,
     run_dynamic_mcp_eval_request,
 )
-from .dynamic_eval import DynamicMcpEvalError, HiddenToolRequestError
+from .dynamic_eval import (
+    DynamicMcpEvalError,
+    HiddenToolRequestError,
+    MaxTurnsExhaustedError,
+)
 from .schema import RunAgentAPIRequestBody, RunDynamicAgentAPIRequestBody
 from .errors import MCPClientToolExecutionError, MCPClientToolTimeoutError
 from .config import config
@@ -233,6 +239,27 @@ async def run_agent_dynamic(
         }
     except Exception as error:
         detail = _dynamic_failure_detail(error)
+        # P1029-D1: a turn-capped run keeps its trajectory. Observability only
+        # -- the status stays 500 and the failure_code stays
+        # `max_turns_exhausted`, so the run is still a policy failure scoring 0.
+        # Without this the 8 turn-capped runs of P1-029 persisted as an empty
+        # payload, and the question they exist to answer -- what were those 50
+        # turns doing -- had no evidence left to answer it.
+        #
+        # This is the one typed error that gains a body. It is safe where the
+        # others are not: the payload is the same message stream a successful
+        # run already returns, not an exception string that could carry
+        # model-derived text into a field tests guarantee stays free of it.
+        if isinstance(error, MaxTurnsExhaustedError):
+            detail["partial_trajectory"] = {
+                "outputs": list(error.outputs),
+                "dynamic_trace": {
+                    "cycles": [asdict(cycle) for cycle in error.cycles],
+                    "model_final_text_present": False,
+                },
+                "usage": error.usage,
+                "truncated_by": "max_turns",
+            }
         logger.error(
             "Dynamic MCP eval failed with %s at stage %s (%s.%s): %s",
             detail["failure_code"],

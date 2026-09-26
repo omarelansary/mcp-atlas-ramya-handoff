@@ -77,7 +77,8 @@ async def run_mcp_eval(
     # Token accounting across the whole run. Emitted once at the end as a
     # separate output type; every existing consumer filters on type ==
     # "message", so this is additive and changes nothing for them.
-    run_usage: Dict[str, Any] = {"cycles": 0, "reported_cycles": 0}
+    run_usage: Dict[str, Any] = {"cycles": 0, "reported_cycles": 0,
+                                 "finish_reasons": []}
 
     for i in range(max_turns):
         assistant_message = None
@@ -96,6 +97,14 @@ async def run_mcp_eval(
             original_content = result.original_content
 
             run_usage["cycles"] += 1
+            # Per-turn finish_reason, carried in RUN METADATA rather than
+            # in the message: litellm keeps it on choices[0], not on the
+            # message, and the message dump is what mirrors provider
+            # input. Without this a turn cut off at the token budget is
+            # indistinguishable from one that finished, and a truncated
+            # answer scores lower with nothing in the record saying why.
+            run_usage["finish_reasons"].append(
+                getattr(result, "finish_reason", None))
             if result.usage:
                 run_usage["reported_cycles"] += 1
                 for key, value in result.usage.items():
@@ -226,6 +235,7 @@ async def run_dynamic_mcp_eval_request(
         messages=body.messages,
         max_turns=body.max_turns,
         extra_body=body.extra_body,
+        tool_document_shape=body.tool_document_shape,
     )
 
 
