@@ -20,6 +20,7 @@ import ast
 import logging
 import argparse
 import hashlib
+from datetime import datetime, timezone
 import math
 import re
 import uuid
@@ -1128,8 +1129,18 @@ def generate_statistics_and_plots(
     model_label: str,
     output_dir: str,
     pass_threshold: float = 0.75,
+    evaluator_model: str | None = None,
+    evaluator_base_url: str | None = None,
 ):
-    """Generates a summary stats CSV and a histogram plot of coverage scores."""
+    """Generates a summary stats CSV and a histogram plot of coverage scores.
+
+    ``evaluator_model`` is recorded IN the stats file. It used to be logged and
+    then discarded, so a score carried no record of the judge that produced it.
+    That made two runs scored ten days apart impossible to compare: the judge is
+    read from ``EVAL_LLM_MODEL``, that variable was edited between them, and the
+    .env itself documents having carried three conflicting values at once. A
+    number whose instrument is unrecorded cannot be compared with another.
+    """
     logger = logging.getLogger(__name__)
     logger.info(f"Step 4: Generating statistics and plots for '{scored_csv_path}'...")
 
@@ -1166,6 +1177,21 @@ def generate_statistics_and_plots(
                 stats_df.iloc[mean_idx + 1 :],
             ]
         ).reset_index(drop=True)
+
+        # Provenance rows: which judge produced these numbers, and where it ran.
+        # Appended as ordinary stat/value rows so every existing reader keeps
+        # working and no column is added to the schema.
+        provenance = pd.DataFrame({
+            "stat": ["judge model", "judge base_url", "pass threshold",
+                     "scored_utc"],
+            "value": [
+                evaluator_model or os.getenv("EVAL_LLM_MODEL") or "UNRECORDED",
+                evaluator_base_url or os.getenv("EVAL_LLM_BASE_URL") or "UNRECORDED",
+                pass_threshold,
+                datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            ],
+        })
+        stats_df = pd.concat([stats_df, provenance]).reset_index(drop=True)
 
         stats_path = os.path.join(output_dir, f"coverage_stats_{model_label}.csv")
         stats_df.to_csv(stats_path, index=False)
@@ -1309,7 +1335,9 @@ async def main(args):
 
         # 3. Generate statistics and plots
         generate_statistics_and_plots(
-            str(scored_path), args.model_label, str(output_dir), args.pass_threshold
+            str(scored_path), args.model_label, str(output_dir), args.pass_threshold,
+            evaluator_model=args.evaluator_model,
+            evaluator_base_url=os.getenv("EVAL_LLM_BASE_URL"),
         )
 
         logger.info("\n🚀 Pipeline finished successfully!")
