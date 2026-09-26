@@ -395,7 +395,9 @@ def test_p1_main_publishes_complete_scored_file_only_after_validation(
     input_path, bundle_path = _bundle(tmp_path, dataframe)
     output_dir = tmp_path / "scored"
     monkeypatch.setattr(scorer, "AsyncLiteLLMClient", ValidClient)
-    monkeypatch.setattr(scorer, "generate_statistics_and_plots", lambda *_args: None)
+    monkeypatch.setattr(
+        scorer, "generate_statistics_and_plots", lambda *_args, **_kwargs: None
+    )
     args = argparse.Namespace(
         num_tasks=None,
         output_dir=str(output_dir),
