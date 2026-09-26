@@ -34,6 +34,16 @@ separate interfaces.
 - Preserve raw MCP tool order for full exposure and enforce hidden-tool
   rejection before forwarding a tool call.
 
+## Concurrent Agents
+
+- Never edit a working tree that another agent (Claude Code or Codex) is
+  editing. A second writing agent works in a workspace worktree, created from
+  the workspace root with
+  `python tools/workspace_worktree.py create <name> --repos mcp-atlas-ramya-handoff,...`.
+- Experiments run only in the primary workspace, which alone holds the ignored
+  data, virtual environment and `.env`. Never run one from a worktree.
+- The committed record is the handoff between agents; a chat summary is not.
+
 ## Data And Git Safety
 
 - Never commit `.env` files, keys, prompts, trajectories, GTFA claims, raw tool
