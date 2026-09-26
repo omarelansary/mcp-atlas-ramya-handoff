@@ -5,10 +5,10 @@ the local counterpart of `thesis-main/CURRENT_TASK.md` and
 `thesis-main/THESIS_STATE.md`; it exists so the adapter's delivery position is
 readable without reconstructing it from Git history.
 
-**State date:** 2026-08-17
-**Branch:** `main`
-**Pin at this state:** `6039753` (2026-08-09, merge of
-`p1-025-mcp-atlas-runtime-recovery`), working tree clean.
+**State date:** 2026-09-26
+**Branch:** `executed-adapter-state-2026-09-26` (integration branch for `main`)
+**Pin at this state:** `72ec44d` before this update, working tree clean.
+`main` is still `0e33e33`; this branch is the state intended to become `main`.
 
 Authoritative cross-repository state remains
 `thesis-main/docs/traceability/cross_repository_delivery_status.md`. Where this
@@ -48,6 +48,11 @@ selector input restrictions.
 
 ## Current position
 
+**Updated 2026-09-26: no adapter task is open.** The executed adapter state
+behind P1-030, E0 Stage 1 and E0 k16 is committed, and CI runs the adapter
+tests for the first time. See the dated section below. The paragraphs that
+follow in this section describe the position as of 2026-08-17.
+
 **No adapter task is open.** The P1-025 tool-selection-policy line closed on
 2026-08-12 as a documented negative result, and its diagnostic-layer work
 (thirteen non-learned selection methods across four pre-registered batches) ran
@@ -62,6 +67,9 @@ completions and 639 live evaluations over the 71 development rows, in which
 full exposure clearly outperformed both reduced-tool conditions).
 
 ## What could reopen work here
+
+*(As of 2026-08-17. The D005 decision below was taken on 2026-08-13 as D011;
+see `thesis-main/DECISIONS.md`. Nothing now reopens work here.)*
 
 One thing, and it is not yet decided: the recorded next action for P1-025 is a
 D005 scope decision about whether the active registry may extend its active set
@@ -83,6 +91,7 @@ V1 (MCP-Atlas harness validation) executed against this adapter, driving each
 row's own `ENABLED_TOOLS` through `/v2/mcp_eval/run_agent`. It passed at
 `0.5730` against a `0.685` reference. Five changes to this repository were
 required, four of them defect fixes. **All are currently uncommitted.**
+*(Superseded: all five were committed in `a3f1d90` on 2026-08-18.)*
 
 ### 1. Transient tool timeouts are retried — `mcp_client/sandbox_client.py`
 
@@ -174,6 +183,44 @@ backup was therefore trackable. Now `.env.*` with `.env.example` and
 ### Test status
 
 `61 passed, 7 subtests` after every change above.
+
+## 2026-09-26 — executed state for P1-030 and E0, and working CI
+
+**What executed.** The eval service that served P1-030, E0 Stage 1 and E0 k16
+ran exactly the dynamic route committed in `00636be` ("Commit the dynamic route
+exactly as P1-030 and E0 executed it"): `agent_eval.py`, `llm.py`, `schema.py`,
+`dynamic_eval.py`, `main.py` and five tests. P1-029 ran on 2026-09-17, before
+the 2026-09-21 turn-cap fix to `dynamic_eval.py` and `main.py`, so its adapter
+state is **not** byte-recoverable. The file hashes and timestamps are in the
+private record `experiments/active-registry-mechanism/audits/execution_provenance_addendum_2026-09-26.md`
+(thesis-private), §3.
+
+**Scorer.** `mcp_evals_scores.py` as committed in `3b33310` records the judge
+model that produced each score; every scored run of the four experiments
+carries those rows. `356554a` lets the scorer test stub accept the new
+provenance arguments.
+
+**Core package.** The service imports `active_registry_core` from a
+non-editable install of the local thesis-main tree (installed 2026-08-25), not
+from the git pin in `pyproject.toml`. All 25 installed modules are
+byte-identical (line endings normalised) to the pinned `7932d0d`, which is on
+thesis-main `main`. Verified 2026-09-26.
+
+**CI fixed** (`8ed006a`, merged `79f4ad6`). Every earlier run on `main` failed
+within seconds: the workflow ran `uv sync` at the repository root, which has no
+`pyproject.toml`, then `make test`, which had no recipe. The workflow now works
+in `services/mcp_eval`, installs every locked dependency except the private
+`active-registry-core`, and runs the ten test files that do not import it
+(89 tests plus 7 subtests; it refuses fewer than 96 JUnit entries, any failure,
+error or skip). `test_dynamic_endpoint.py`, `test_dynamic_selectors.py` and
+`test_p1_026_selectors.py` need the core and run locally; `make test` runs the
+full suite (124 passed on 2026-09-26). The fix depends on the five tests added
+in `00636be`, so it cannot reach `main` without the executed state.
+
+**Concurrency rule** added to `AGENTS.md` (`d88c41c`, merged `72ec44d`).
+
+**Recorded next adapter action:** none. This branch is ready to become `main`
+once this record is committed and CI is green on its head.
 
 ## Update rule
 
